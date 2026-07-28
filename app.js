@@ -1,5 +1,5 @@
 /* ============================================================================
-   Roster Atlas — offline-first crew roster mapper
+   Transavia Roster — offline-first crew roster mapper
    Everything runs on-device. No network calls are made with roster data.
    ========================================================================== */
 'use strict';
@@ -69,6 +69,9 @@ function gcSegments(a, b, n = 48) {
 
 /* ── 2. IndexedDB ───────────────────────────────────────────────────────── */
 
+/* Do NOT rename DB_NAME. It is the IndexedDB database key: changing it points
+   the app at a fresh, empty database and orphans every roster already imported
+   on someone's phone. The app's display name is independent of it. */
 const DB_NAME = 'roster-atlas', DB_VERSION = 1;
 let db = null;
 
@@ -746,7 +749,7 @@ async function loadData() {
   }
   if (healed.length) {
     await putAll('flights', healed);
-    console.info(`[roster-atlas] backfilled route/distance on ${healed.length} leg(s)`);
+    console.info(`[transavia-roster] backfilled route/distance on ${healed.length} leg(s)`);
   }
 
   const saved = await metaGet('ui', null);
@@ -1806,13 +1809,13 @@ async function renamePerson(key) {
 
 async function exportBackup() {
   const payload = {
-    app: 'roster-atlas', version: 1, exported: new Date().toISOString(),
+    app: 'transavia-roster', version: 1, exported: new Date().toISOString(),
     flights: S.flights, duties: S.duties,
     people: [...S.people.values()].map(p => ({ ...p, tags: [...(p.tags || [])] })),
     sources: S.sources,
   };
   const blob = new Blob([JSON.stringify(payload, null, 1)], { type: 'application/json' });
-  const name = `roster-atlas-backup-${iso(new Date())}.json`;
+  const name = `transavia-roster-backup-${iso(new Date())}.json`;
   const file = new File([blob], name, { type: 'application/json' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }

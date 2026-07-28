@@ -1,5 +1,5 @@
 /* ============================================================================
-   Roster Atlas — service worker
+   Transavia Roster — service worker
    Precaches the whole app shell (including the PDF parser and the offline
    world outline) so the app opens and imports rosters with no network at all.
    Map tiles, when the user turns them on, are cached opportunistically.

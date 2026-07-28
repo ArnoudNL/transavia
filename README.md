@@ -1,4 +1,4 @@
-# Roster Atlas
+# Transavia Roster
 
 An offline-first PWA that turns a Crew Roster Portal "Individual Roster" PDF into
 a searchable map of everywhere you've flown, who you flew with, and how often.
@@ -33,8 +33,10 @@ do. The site's own declared fallback is Arial, so the stack is
 an iPhone. If you have a Söhne licence, drop the woff2 files in `vendor/fonts/`
 and add an `@font-face` block; the first entry in the stack already points at it.
 
-This is a personal tool, not a Transavia product: it carries no Transavia logo or
-wordmark and doesn't claim any affiliation.
+**This is not an official Transavia app.** It is an independent personal tool,
+not affiliated with, endorsed by, or connected to Transavia. It deliberately does
+*not* use the Transavia logo or the "t" mark; the icon is drawn from scratch and
+only the brand colours are borrowed. All trademarks belong to their owners.
 
 ### Data-visualisation colours
 
@@ -52,13 +54,13 @@ colour-vision deficiency rather than picked by eye:
 
 | File | Purpose |
 |---|---|
-| `index.html` | App shell — five tabs, filter sheet, detail sheet |
-| `styles.css` | Dark UI, iPhone safe-area aware |
+| `index.html` | App shell — six tabs, filter sheet, detail sheet |
+| `styles.css` | Transavia-styled UI, iPhone safe-area aware |
 | `app.js` | Roster parser, IndexedDB layer, map, analytics |
 | `manifest.json` | PWA manifest (standalone, icons) |
 | `sw.js` | Service worker — precaches the shell, caches map tiles |
 | `vendor/` | Leaflet 1.9.4 and pdf.js 3.11 (legacy build), served locally |
-| `data/airports.json` | 4,051 IATA airports with coordinates (OurAirports) |
+| `data/airports.json` | 9,753 IATA airports — coordinates, time zone, closed flag |
 | `data/world.geo.json` | Simplified world outline, so the map works with no network |
 | `icons/` | App icons, including maskable and apple-touch |
 
@@ -81,7 +83,7 @@ Service workers require a **secure context**: `https://` or `localhost`. A LAN
 address like `http://192.168.1.5:8765` is *not* secure, so the app will run but
 will not install or work offline.
 
-1. Publish the `roster-atlas/` folder to any static host over HTTPS — GitHub
+1. Publish this folder to any static host over HTTPS — GitHub
    Pages, Netlify, Cloudflare Pages. The host only ever serves the app; it never
    sees a roster, because parsing happens on the phone.
 2. Open the URL in Safari on the iPhone.
