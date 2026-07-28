@@ -301,6 +301,19 @@ input[type=date]{font-variant-numeric:tabular-nums}
 .hint{font-size:14px;line-height:20px;color:var(--text-tertiary);margin-bottom:16px}
 .hint b{color:var(--text-primary);font-weight:var(--w-bold)}
 
+/* legs left out of the block totals, listed so they can be checked */
+.untimed{display:flex;flex-direction:column;gap:6px;margin:10px 0 4px}
+.untimed-row{
+  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;width:100%;text-align:left;
+  padding:9px 12px;border-radius:var(--r-3);
+  background:var(--warning-surface);border:1px solid #ffebc7;
+  font-size:13px;line-height:18px;color:var(--text-secondary)
+}
+.untimed-row:active{background:#fff4d9}
+.untimed-when{font-weight:var(--w-bold);color:var(--text-primary);font-variant-numeric:tabular-nums}
+.untimed-what{color:var(--text-primary)}
+.untimed-why{color:var(--warning);margin-left:auto}
+
 /* duty-code toggles */
 .codechips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}
 .codechip{

@@ -96,7 +96,11 @@
     <div class="scroll">
       <div class="toolbar">
         <input type="search" id="flightSearch" placeholder="Flight no, airport, crew…" autocomplete="off" autocorrect="off" spellcheck="false">
-        <label class="check"><input type="checkbox" id="showDuties"> Show ground duties</label>
+        <div class="segmented" id="flightKind" role="tablist" aria-label="Show">
+          <button class="is-on" data-kind="flights">Flights</button>
+          <button data-kind="duties">Ground duties</button>
+          <button data-kind="both">Both</button>
+        </div>
       </div>
       <div class="statstrip inline" id="flightStats"></div>
       <div id="flightList" class="list dated"></div>

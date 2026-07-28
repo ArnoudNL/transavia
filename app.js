@@ -231,11 +231,20 @@ const fmtHours = min => (min == null ? '—' : (min / 60).toFixed(min >= 6000 ? 
 const RE = {
   dayRow:   /^(\d{2})(MON|TUE|WED|THU|FRI|SAT|SUN)\b/,
   period:   /^(\d{2})([A-Z]{3})(\d{2})\s*-\s*(\d{2})([A-Z]{3})(\d{2})$/,
-  flightNo: /^[A-Z]{2}\d{2,4}[A-Z]?$/,
+  /* Designator + 1-4 digits. The designator is two characters and may mix a
+     letter with a digit — U2 is easyJet, so "U28882" is U2 flight 8882. Two
+     digits is rejected so aircraft types (73H, 32N) can't match. At least two
+     trailing digits are required because two letters + one digit is a
+     ground-duty code here (VE1, FS1, WV1, CT8). */
+  flightNo: /^(?:[A-Z]{2}|[A-Z]\d|\d[A-Z])\d{2,4}[A-Z]?$/,
+  crewFlightNo: /^(?:[A-Z]{2}|[A-Z]\d|\d[A-Z])\d{1,4}[A-Z]?$/,
   time:     /^([01]\d|2[0-3]):([0-5]\d)$/,
   iata:     /^[A-Z]{3}$/,
   acType:   /^\d{2}[A-Z0-9]$/,
-  flags:    /^[A-Z]{1,2}(,[A-Z]{1,2})*$/,
+  /* DD-column qualifiers: V, P, D, U,K … and "L,4". Digits appear after the
+     comma, so the character class cannot be letters-only or the whole row is
+     read as a ground duty and its flight is lost. */
+  flags:    /^[A-Z0-9]{1,2}(,[A-Z0-9]{1,2})*$/,
   crewRow:  /^(\d{2})([A-Z]{3})(\d{2})\s+([A-Z]{2}\d{2,4}[A-Z]?)\s+(.+)$/,
   noteRow:  /^(\d{2})([A-Z]{3})(\d{2})\s+(.+)$/,
   /* Owner banner: "<surname> <first name> <code> <staff no> <licences> <phone>",
@@ -268,6 +277,18 @@ function isChrome(s) {
 
 const normKey = s => s.toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9. ']/g, '').trim();
 
+/* The two halves of a roster don't always pad a flight number the same way:
+   the operating row prints HV097 where the crew list prints HV97. They are the
+   same flight, so every comparison — joining crew to legs, and deciding
+   whether a leg is already stored — happens on the unpadded form. What the
+   roster printed is kept for display. */
+const flightKey = n => {
+  /* Mixed designators (U2, 4U) are tried first so the zero-stripping happens
+     after the whole designator, not in the middle of it. */
+  const m = /^([A-Z]\d|\d[A-Z]|[A-Z]{2,3}|[A-Z])0*(\d+)([A-Z]?)$/.exec(String(n || '').toUpperCase());
+  return m ? m[1] + m[2] + m[3] : String(n || '').toUpperCase();
+};
+
 /** "R. van der Weijden C. Tuin (U,K)" -> [{name, tags}] */
 function splitCrewNames(str) {
   const out = [];
@@ -291,16 +312,22 @@ function parseDayRow(rest) {
   const toks = rest.split(/\s+/).filter(Boolean);
   let i = 0;
   const flags = [];
-  /* Leading 1–2 letter tokens are qualifier flags ("V", "U,K") — but a bare
-     two-letter token can also BE the activity ("FA AMS 08:00 AMS 11:45").
-     It is the activity when what follows is a real airport plus a time; it is
-     a flag when what follows is another duty code ("L HOS AMS 07:00 …"). */
+  /* Leading tokens are DD-column qualifiers ("V", "P", "D", "U,K", "L,4"), but
+     a bare two-letter token can instead BE the activity ("FA AMS 08:00 …").
+     A comma group or a single letter is never an activity — no roster code in
+     any year is one character — so those are taken as qualifiers outright.
+     Only the two-character case needs the look-ahead, and even that cannot
+     lean on "the next token is an airport": TAX, PIC and CUR are duty codes
+     that are also real IATA codes, which is what made "L TAX 17:00 GRQ …"
+     parse as activity L departing Taxco. */
   while (i < toks.length && RE.flags.test(toks[i])) {
-    const nxt = toks[i + 1], nxt2 = toks[i + 2];
+    const tok = toks[i], nxt = toks[i + 1], nxt2 = toks[i + 2];
     if (!nxt) break;
-    if (RE.time.test(nxt)) break;
-    if (RE.iata.test(nxt) && AIRPORTS[nxt] && nxt2 && RE.time.test(nxt2)) break;
-    flags.push(toks[i]); i++;
+    if (!(tok.includes(',') || tok.length === 1)) {
+      if (RE.time.test(nxt)) break;
+      if (RE.iata.test(nxt) && AIRPORTS[nxt] && nxt2 && RE.time.test(nxt2)) break;
+    }
+    flags.push(tok); i++;
   }
   if (i >= toks.length) return null;
   const activity = toks[i++];
@@ -343,11 +370,11 @@ function parseRoster(lines) {
       const s = raw.replace(/\s+/g, ' ').trim();
       if (SECTION[s]) { inCrew = SECTION[s] === 'crew'; continue; }
       if (!inCrew) continue;
-      const m = /^\d{2}[A-Z]{3}\d{2}\s+([A-Z]{2}\d{1,4}[A-Z]?)\s/.exec(s);
-      if (m) knownFlights.add(m[1]);
+      const m = /^\d{2}[A-Z]{3}\d{2}\s+(\S+)\s/.exec(s);
+      if (m && RE.crewFlightNo.test(m[1])) knownFlights.add(flightKey(m[1]));
     }
   }
-  const isFlightNo = a => RE.flightNo.test(a) || knownFlights.has(a);
+  const isFlightNo = a => RE.flightNo.test(a) || knownFlights.has(flightKey(a));
 
   const noteDate = (dd, mmm, yy) => {
     const m = monthIndex(mmm);
@@ -399,11 +426,11 @@ function parseRoster(lines) {
         if (!date) continue;
         lastCrewRow = { date, flightNo: m[4], names: splitCrewNames(m[5]) };
         res.crewRows++;
-        (res.crewByFlight ||= new Map()).set(date + '|' + m[4], lastCrewRow.names);
+        (res.crewByFlight ||= new Map()).set(date + '|' + flightKey(m[4]), lastCrewRow.names);
       } else if (lastCrewRow) {                       // wrapped continuation line
         const extra = splitCrewNames(s);
         lastCrewRow.names.push(...extra);
-        res.crewByFlight.set(lastCrewRow.date + '|' + lastCrewRow.flightNo, lastCrewRow.names);
+        res.crewByFlight.set(lastCrewRow.date + '|' + flightKey(lastCrewRow.flightNo), lastCrewRow.names);
       }
       continue;
     }
@@ -479,7 +506,14 @@ function parseRoster(lines) {
   /* attach crew composition + day notes to the legs */
   const byFlight = res.crewByFlight || new Map();
   for (const f of res.flights) {
-    const names = byFlight.get(f.date + '|' + f.flightNo) || [];
+    /* A leg that lands after midnight is filed under the day it departed, but
+       the crew list may reference the day it arrived. Fall back to the arrival
+       date — only when the departure date found nothing, and still keyed on the
+       flight number, so it cannot borrow another day's crew. */
+    const fk = flightKey(f.flightNo);
+    const names = byFlight.get(f.date + '|' + fk)
+      || (f.arrDate && f.arrDate !== f.date ? byFlight.get(f.arrDate + '|' + fk) : null)
+      || [];
     const keys = [];
     for (const p of names) { const k = addPerson(p.name, p.tags); if (k) keys.push(k); }
     if (res.ownerKey) keys.unshift(res.ownerKey);
@@ -617,7 +651,7 @@ function parseTabular(text, filename) {
 
 /* ── 6. import pipeline (parse → normalise → dedupe → store) ────────────── */
 
-const flightId = f => `${f.date}|${f.flightNo}|${f.from}|${f.to || '???'}`;
+const flightId = f => `${f.date}|${flightKey(f.flightNo)}|${f.from}|${f.to || '???'}`;
 const dutyId   = d => `${d.owner || '?'}|${d.date}|${d.code}|${d.from || ''}|${d.start || ''}`;
 const routeKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
 
@@ -756,7 +790,7 @@ const S = {
   filter: { from: null, to: null, crew: [], passive: true },
   overlap: { crew: [], from: null, to: null },
   view: 'map', selectedRoute: null, tiles: false, labels: true,
-  routeSort: 'count', flightLimit: 200, hoursMode: 'month',
+  routeSort: 'count', flightLimit: 200, hoursMode: 'month', flightKind: 'flights',
   excluded: new Set(REST_CODES_DEFAULT),   // ground codes the user says aren't duty
 };
 
@@ -764,8 +798,39 @@ const alias = k => S.aliases[k] || k;
 const personName = k => { const p = S.people.get(alias(k)); return p ? p.name : k; };
 const isOwner = k => { const p = S.people.get(alias(k)); return !!(p && p.isOwner); };
 
+/** Legs stored before flight numbers were unpadded still carry the old id, so
+ *  re-importing would file HV097 and HV97 as two flights. Re-key them once,
+ *  merging into the canonical record where one already exists. */
+async function rekeyPaddedFlights(list) {
+  const byId = new Map(list.map(x => [x.id, x]));
+  const drop = [];
+  for (const x of list) {
+    const want = flightId(x);
+    if (want === x.id) continue;
+    const tgt = byId.get(want);
+    if (tgt && tgt !== x) {
+      tgt.crew    = [...new Set([...(tgt.crew || []), ...(x.crew || [])])];
+      tgt.owners  = [...new Set([...(tgt.owners || []), ...(x.owners || [])])];
+      tgt.sources = [...new Set([...(tgt.sources || []), ...(x.sources || [])])];
+      tgt.note    = tgt.note || x.note;
+    } else {
+      byId.set(want, { ...x, id: want });
+    }
+    byId.delete(x.id);
+    drop.push(x.id);
+  }
+  if (!drop.length) return list;
+  const t = tx(['flights'], 'readwrite'), os = t.objectStore('flights');
+  drop.forEach(id => os.delete(id));
+  [...byId.values()].forEach(r => os.put(r));
+  await idbDone(t);
+  console.info(`[transavia-roster] re-keyed ${drop.length} leg(s) onto unpadded flight numbers`);
+  return [...byId.values()];
+}
+
 async function loadData() {
-  const [f, d, p, s] = await Promise.all([getAll('flights'), getAll('duties'), getAll('people'), getAll('sources')]);
+  let [f, d, p, s] = await Promise.all([getAll('flights'), getAll('duties'), getAll('people'), getAll('sources')]);
+  f = await rekeyPaddedFlights(f);
   S.aliases = await metaGet('aliases', {});
   S.people = new Map();
   for (const x of p) if (!S.aliases[x.key]) S.people.set(x.key, x);
@@ -1164,14 +1229,23 @@ function flightRowHTML(f, opts = {}) {
   </button>`;
 }
 
+/* Only codes whose meaning has been confirmed are spelled out; anything else
+   keeps its raw code rather than being given an invented name. */
+const DUTY_LABEL = {
+  PIC: 'Taxi', HTR: 'Taxi', TAX: 'Taxi',
+  HTL: 'Hotel',
+};
+const dutyLabel = code => DUTY_LABEL[code] || null;
+
 function dutyRowHTML(d) {
   const t = [d.start, d.end].filter(Boolean).join('–');
+  const label = dutyLabel(d.code);
   const named = c => { const n = apName(c); return n && n !== c ? n : null; };
   const where = [d.from, d.to].filter(Boolean);
   const cities = where.some(named) ? where.map(c => apName(c)).join(' → ') : '';
   return `<div class="row-item">
     <div class="row-main">
-      <div class="row-title">${esc(d.code)} <span class="tag duty">duty</span></div>
+      <div class="row-title">${esc(label || d.code)}${label ? ` <span class="tag">${esc(d.code)}</span>` : ''} <span class="tag duty">duty</span></div>
       ${cities ? `<div class="row-sub cities">${esc(cities)}</div>` : ''}
       <div class="row-sub">${esc(where.join(' → ') || '—')}${t ? ' · ' : ''}<span class="times">${esc(t)}</span></div>
     </div></div>`;
@@ -1468,7 +1542,8 @@ function renderRoutes() {
 function renderFlights() {
   const q = $('#flightSearch').value.trim().toLowerCase();
   let list = filtered();
-  if ($('#showDuties').checked) list = list.concat(filteredDuties());
+  if (S.flightKind === 'duties')     list = filteredDuties();
+  else if (S.flightKind === 'both')  list = list.concat(filteredDuties());
   if (q) {
     list = list.filter(x => {
       const hay = [x.flightNo, x.code, x.from, x.to, x.date, x.ac].filter(Boolean).join(' ').toLowerCase();
@@ -1479,14 +1554,27 @@ function renderFlights() {
   list.sort((a, b) => b.date.localeCompare(a.date) || (b.dep || '').localeCompare(a.dep || ''));
 
   const flightsOnly = list.filter(x => x.flightNo);
+  const dutiesOnly  = list.filter(x => !x.flightNo);
   const sum = summarise(flightsOnly);
-  const days = new Set(flightsOnly.map(x => x.date)).size;   // flying days, not duty days
-  $('#flightStats').innerHTML = statTiles([
-    [fmtInt(sum.legs), 'legs'], [fmtInt(days), 'days'],
-    [fmtInt(sum.routes), 'routes'], [fmtInt(Math.round(sum.km / 1000)) + 'k', 'km'],
-  ]);
-  const { shown, total } = renderDayGroups($('#flightList'), list, S.flightLimit,
-    { empty: 'No flights match the current filter.' });
+  const days = new Set(list.map(x => x.date)).size;
+
+  /* Route and distance mean nothing for ground duties, so the tiles follow
+     what is actually on screen rather than showing a row of zeros. */
+  const tiles = S.flightKind === 'duties'
+    ? [[fmtInt(dutiesOnly.length), 'ground duties'], [fmtInt(days), 'days'],
+       [fmtInt(new Set(dutiesOnly.map(x => x.code)).size), 'kinds']]
+    : S.flightKind === 'both'
+      ? [[fmtInt(sum.legs), 'legs'], [fmtInt(dutiesOnly.length), 'ground duties'],
+         [fmtInt(days), 'days'], [fmtInt(sum.routes), 'routes'],
+         [fmtInt(Math.round(sum.km / 1000)) + 'k', 'km']]
+      : [[fmtInt(sum.legs), 'legs'], [fmtInt(days), 'days'],
+         [fmtInt(sum.routes), 'routes'], [fmtInt(Math.round(sum.km / 1000)) + 'k', 'km']];
+  $('#flightStats').innerHTML = statTiles(tiles);
+
+  const empty = S.flightKind === 'duties' ? 'No ground duties match the current filter.'
+    : S.flightKind === 'both' ? 'Nothing matches the current filter.'
+    : 'No flights match the current filter.';
+  const { shown, total } = renderDayGroups($('#flightList'), list, S.flightLimit, { empty });
   const more = $('#flightMore');
   more.hidden = shown >= total;
   more.textContent = `Show more (${fmtInt(total - shown)} left)`;
@@ -1502,7 +1590,16 @@ function renderHours() {
     days: a.days + p.dutyDays, fly: a.fly + p.flyDays, sectors: a.sectors + p.sectors,
   }), { block: 0, duty: 0, days: 0, fly: 0, sectors: 0 });
 
-  const unknownBlock = legs.filter(f => legBlock(f) == null).length;
+  /* Name the legs that could not be timed, and say why — a bare count gives
+     nothing to go and check in the roster. */
+  const untimed = legs.filter(f => legBlock(f) == null).map(f => {
+    const why = !f.dep && !f.arr ? 'no off/on-blocks time'
+      : !f.dep ? 'no off-blocks time'
+      : !f.arr ? 'no on-blocks time'
+      : 'on-blocks before off-blocks by more than a day';
+    return { f, why };
+  });
+  const unknownBlock = untimed.length;
   const avgDuty = tot.days ? Math.round(tot.duty / tot.days) : null;
 
   $('#hoursStats').innerHTML = statTiles([
@@ -1554,7 +1651,14 @@ function renderHours() {
     '<br><br><b>Which ground codes count as duty?</b> Tap to switch one off if it is really leave or rest — the totals above update immediately.' +
     `<div class="codechips">${chips}</div>` +
     (zeroSpan.length ? `<br>Always ignored, because they have no time span at all (day-off / leave markers): ${esc(zeroSpan.join(' '))}.` : '') +
-    (unknownBlock ? `<br><br>${fmtInt(unknownBlock)} leg${unknownBlock === 1 ? '' : 's'} could not be timed and ${unknownBlock === 1 ? 'is' : 'are'} left out of block totals.` : '');
+    (unknownBlock ? `<br><br><b>${fmtInt(unknownBlock)} leg${unknownBlock === 1 ? '' : 's'} could not be timed</b> and ${unknownBlock === 1 ? 'is' : 'are'} left out of block totals:` +
+      `<div class="untimed">${untimed.slice(0, 40).map(({ f, why }) =>
+        `<button class="untimed-row" data-flight="${esc(f.id)}">
+           <span class="untimed-when">${esc(fmtShort(f.date))}</span>
+           <span class="untimed-what"><span class="iata">${esc(f.flightNo)}</span> ${esc(f.from)}<span class="arrow">→</span>${esc(f.to || '??')}</span>
+           <span class="untimed-why">${esc(why)}</span>
+         </button>`).join('')}</div>` +
+      (untimed.length > 40 ? `<br>…and ${fmtInt(untimed.length - 40)} more.` : '') : '');
 }
 
 function showPeriodSheet(key) {
@@ -1817,7 +1921,13 @@ function wireEvents() {
 
   /* flights */
   $('#flightSearch').addEventListener('input', () => { S.flightLimit = 200; renderFlights(); });
-  $('#showDuties').addEventListener('change', renderFlights);
+  $('#flightKind').addEventListener('click', ev => {
+    const b = ev.target.closest('[data-kind]'); if (!b) return;
+    S.flightKind = b.dataset.kind;
+    $$('#flightKind button').forEach(x => x.classList.toggle('is-on', x === b));
+    S.flightLimit = 200;
+    renderFlights();
+  });
   $('#flightMore').addEventListener('click', () => { S.flightLimit += 400; renderFlights(); });
 
   /* hours */
@@ -1995,7 +2105,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '7';   // keep in step with VERSION in sw.js
+const SW_TAG = '8';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {
