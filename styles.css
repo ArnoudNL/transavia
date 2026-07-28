@@ -168,6 +168,7 @@ em{font-style:normal;font-weight:var(--w-bold)}
 .view.is-active{display:block}
 .scroll{
   position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
   background:var(--canvas-2);
   padding:16px calc(16px + var(--safe-r)) calc(var(--tabbar-h) + var(--safe-b) + 28px) calc(16px + var(--safe-l));
 }
@@ -403,6 +404,7 @@ input[type=date]{font-variant-numeric:tabular-nums}
 .modal{position:fixed;inset:0;z-index:120;display:flex;align-items:flex-end;justify-content:center}
 .modal[hidden]{display:none}
 .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4)}
+.modal-card.is-dragging{transition:none!important;animation:none!important}
 .modal-card{
   position:relative;width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;
   background:var(--canvas);
@@ -414,7 +416,7 @@ input[type=date]{font-variant-numeric:tabular-nums}
 @keyframes slideup{from{transform:translateY(18px);opacity:.4}}
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:20px 20px 12px}
 .modal-head h2{font-size:24px;line-height:36px;font-weight:var(--w-bold)}
-.modal-body{padding:0 20px 8px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.modal-body{padding:0 20px 8px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .modal-foot{display:flex;gap:12px;padding:16px 20px 20px;border-top:1px solid var(--border-subtle)}
 .modal-foot .btn-primary{flex:1}
 
@@ -428,9 +430,14 @@ input[type=date]{font-variant-numeric:tabular-nums}
   animation:slideup .26s cubic-bezier(.22,1,.36,1)
 }
 .sheet[hidden]{display:none}
-.sheet-grab{padding:12px 0 6px;display:grid;place-items:center;flex:0 0 auto}
-.sheet-grab::before{content:"";width:40px;height:4px;border-radius:var(--r-full);background:var(--surface-4)}
-.sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 20px 20px}
+/* touch-action:none so a drag on the handle is ours, never the page's */
+.sheet-grab{padding:14px 0 8px;display:grid;place-items:center;flex:0 0 auto;touch-action:none;cursor:grab}
+.sheet-grab:active{cursor:grabbing}
+.sheet-grab::before{content:"";width:44px;height:5px;border-radius:var(--r-full);background:var(--surface-4);transition:background .15s}
+.sheet.is-dragging .sheet-grab::before{background:var(--border-strong)}
+.sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 20px 20px;overscroll-behavior:contain}
+/* no transition while the finger is down, so the sheet tracks it exactly */
+.sheet.is-dragging{transition:none!important;animation:none!important}
 .sheet-title{display:flex;align-items:center;gap:10px;font-size:24px;line-height:36px;font-weight:var(--w-bold);flex-wrap:wrap}
 .sheet-sub{font-size:14px;line-height:20px;color:var(--text-tertiary);margin-bottom:16px}
 .sheet-stats{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:20px}
@@ -439,6 +446,16 @@ input[type=date]{font-variant-numeric:tabular-nums}
 .sheet .daygroup{margin-top:18px}
 .sheet .dayhead{padding-bottom:8px}
 .sheet .dayhead small{display:block;width:100%}
+
+/* shown once a downward drag passes the point where letting go reloads */
+.pullhint{
+  position:fixed;left:50%;top:calc(var(--safe-t) + 12px);transform:translateX(-50%);
+  z-index:320;padding:8px 18px;border-radius:var(--r-full);
+  font-size:13px;line-height:18px;font-weight:var(--w-bold);
+  background:var(--navy);color:#fff;box-shadow:var(--shadow-lg);
+  pointer-events:none;transition:opacity .15s
+}
+.pullhint.is-armed{background:var(--green-dark)}
 
 .toast{
   position:fixed;left:50%;transform:translateX(-50%);

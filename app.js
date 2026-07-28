@@ -1170,9 +1170,104 @@ function renderDayGroups(node, items, limit, opts = {}) {
 function openSheet(html) {
   const s = $('#detailSheet');
   $('#sheetBody').innerHTML = html;
+  $('#sheetBody').scrollTop = 0;
+  s.style.transform = '';
   s.hidden = false;
 }
-const hideSheet = () => { $('#detailSheet').hidden = true; };
+const hideSheet = () => {
+  const s = $('#detailSheet');
+  s.hidden = true;
+  s.style.transform = '';
+};
+
+/* ── drag-to-dismiss ────────────────────────────────────────────────────── */
+/* A panel that slides up should come back down under the finger. Without this
+   the gesture falls through to the browser and pulls the whole page to
+   refresh — so a short drag dismisses the panel, and only a long, deliberate
+   pull past a much larger threshold reloads. */
+
+const DISMISS_PX = 76;                                   // short drag: close
+const dragReloadPx = () => Math.min(window.innerHeight * 0.5, 340);   // long pull: reload
+
+function dragToDismiss(el, { onDismiss, handle, scroller }) {
+  let y0 = 0, x0 = 0, dy = 0, t0 = 0;
+  let eligible = false, decided = false, active = false;
+  const hint = $('#pullHint');
+
+  const showHint = () => {
+    if (dy > DISMISS_PX * 1.6) {
+      const armed = dy > dragReloadPx();
+      hint.hidden = false;
+      hint.classList.toggle('is-armed', armed);
+      hint.textContent = armed ? 'Release to reload' : 'Keep pulling to reload';
+    } else hint.hidden = true;
+  };
+  const clearHint = () => { hint.hidden = true; hint.classList.remove('is-armed'); };
+
+  const begin = (px, py, target) => {
+    y0 = py; x0 = px; dy = 0; t0 = Date.now();
+    decided = active = false;
+    const onHandle = handle && target.closest(handle);
+    const sc = scroller && el.querySelector(scroller);
+    eligible = !!onHandle || !sc || sc.scrollTop <= 0;
+  };
+  const move = (px, py, ev) => {
+    if (!eligible) return;
+    const ddy = py - y0, ddx = px - x0;
+    if (!decided) {
+      if (Math.abs(ddy) < 6 && Math.abs(ddx) < 6) return;
+      decided = true;
+      active = ddy > 0 && Math.abs(ddy) > Math.abs(ddx);   // downward, mostly vertical
+      if (active) el.classList.add('is-dragging');
+    }
+    if (!active) return;
+    dy = Math.max(0, ddy);
+    if (ev.cancelable) ev.preventDefault();                // stop page pull-to-refresh
+    /* resist past the reload point so the pull feels deliberate */
+    const shown = dy <= dragReloadPx() ? dy : dragReloadPx() + (dy - dragReloadPx()) * 0.35;
+    el.style.transform = `translateY(${shown}px)`;
+    showHint();
+  };
+  const reset = () => {
+    el.classList.remove('is-dragging');
+    el.style.transform = '';
+    clearHint();
+    const past = dy;
+    active = eligible = decided = false;
+    dy = 0;
+    return past;
+  };
+  const finish = () => {
+    if (!active) { eligible = decided = false; return; }
+    const flick = dy > 32 && Date.now() - t0 < 220;
+    const past = reset();
+    el.dataset.dragged = past > 6 ? '1' : '';
+    if (past > dragReloadPx()) { location.reload(); return; }
+    if (past > DISMISS_PX || flick) onDismiss();
+  };
+  /* A cancelled touch is not a decision — snap back and do nothing. */
+  const abort = () => { if (active) reset(); else { eligible = decided = false; } };
+
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) { eligible = false; return; }
+    begin(e.touches[0].clientX, e.touches[0].clientY, e.target);
+  }, { passive: true });
+  el.addEventListener('touchmove', e => {
+    if (e.touches.length === 1) move(e.touches[0].clientX, e.touches[0].clientY, e);
+  }, { passive: false });
+  el.addEventListener('touchend', finish);
+  el.addEventListener('touchcancel', abort);
+
+  /* mouse, so the same gesture is testable and usable on a desktop */
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    begin(e.clientX, e.clientY, e.target);
+    const mm = ev => move(ev.clientX, ev.clientY, ev);
+    const mu = () => { finish(); window.removeEventListener('pointermove', mm); window.removeEventListener('pointerup', mu); };
+    window.addEventListener('pointermove', mm);
+    window.addEventListener('pointerup', mu);
+  });
+}
 
 function showRouteSheet(key) {
   const r = routeCache.find(x => x.key === key) || aggregateRoutes(filtered()).find(x => x.key === key);
@@ -1783,7 +1878,17 @@ function wireEvents() {
     }
   });
 
-  $('#sheetGrab').addEventListener('click', hideSheet);
+  /* tap the handle still closes — but not when the tap was the end of a drag */
+  $('#sheetGrab').addEventListener('click', () => {
+    const s = $('#detailSheet');
+    if (s.dataset.dragged === '1') { s.dataset.dragged = ''; return; }
+    hideSheet();
+  });
+  dragToDismiss($('#detailSheet'), { onDismiss: hideSheet, handle: '.sheet-grab', scroller: '.sheet-body' });
+  dragToDismiss($('#filterSheet .modal-card'), {
+    onDismiss: () => { $('#filterSheet').hidden = true; },
+    handle: '.modal-head', scroller: '.modal-body',
+  });
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { hideSheet(); $('#filterSheet').hidden = true; } });
 }
 
@@ -1852,7 +1957,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '5';   // keep in step with VERSION in sw.js
+const SW_TAG = '6';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {
