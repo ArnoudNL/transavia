@@ -105,6 +105,10 @@
 }
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* Any `display` rule outranks the [hidden] attribute's UA default, so an
+   element with an id/class display value stays visible when hidden is set.
+   This makes the attribute mean what it says, everywhere. */
+[hidden]{display:none!important}
 html,body{height:100%}
 body{
   margin:0;
@@ -333,6 +337,9 @@ input[type=date]{font-variant-numeric:tabular-nums}
 .row-main{flex:1;min-width:0}
 .row-title{font-size:16px;line-height:24px;font-weight:var(--w-bold);display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--text-primary)}
 .row-sub{font-size:14px;line-height:20px;color:var(--text-tertiary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* spelled-out airports, sitting between the IATA pair and the flight detail */
+.row-sub.cities{color:var(--text-secondary);margin-top:3px}
+.row-sub.cities .arrow{color:var(--text-disabled)}
 .row-num{font-size:18px;line-height:24px;font-weight:var(--w-bold);font-variant-numeric:tabular-nums;text-align:right;color:var(--text-primary)}
 .row-num small{display:block;font-size:11px;line-height:14px;color:var(--text-tertiary);font-weight:var(--w-regular)}
 
@@ -429,6 +436,9 @@ input[type=date]{font-variant-numeric:tabular-nums}
 .sheet-stats{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin-bottom:20px}
 .sheet-stats::-webkit-scrollbar{display:none}
 .sheet .section-h{margin:20px 0 10px}
+.sheet .daygroup{margin-top:18px}
+.sheet .dayhead{padding-bottom:8px}
+.sheet .dayhead small{display:block;width:100%}
 
 .toast{
   position:fixed;left:50%;transform:translateX(-50%);

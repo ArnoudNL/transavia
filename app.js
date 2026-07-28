@@ -882,6 +882,9 @@ function dutyDays(legs, duties) {
     }
     const dutyMin = (start != null && end != null && end >= start && end - start <= MAXDUR)
       ? Math.round((end - start) / 60000) : null;
+    /* Legs and ground duties arrive in separate passes — put the day back in
+       chronological order so drilling into it reads like the roster page. */
+    items.sort((a, b) => (itemBounds(a).start ?? 0) - (itemBounds(b).start ?? 0));
     out.push({
       date, sectors, start, end, dutyMin,
       blockMin: blockKnown ? blockMin : null,
@@ -1098,22 +1101,41 @@ function flightRowHTML(f, opts = {}) {
   if (f.passive) tags.push('<span class="tag pax">pax</span>');
   if (opts.showDate) tags.push(`<span class="tag">${esc(fmtShort(f.date))}</span>`);
   const crewN = (f.crew || []).length;
+
+  /* Spell the airports out, as the Routes tab does — a bare IATA pair is not
+     much use for anywhere you only visited once. Suppressed when neither end
+     resolves, so it can't just echo the codes back. */
+  const named = c => { const n = apName(c); return n && n !== c ? n : null; };
+  const cities = (named(f.from) || named(f.to))
+    ? `${esc(apName(f.from))} <span class="arrow">→</span> ${esc(f.to ? apName(f.to) : '??')}`
+    : '';
+
+  const block = legBlock(f);
+  const metric = opts.showBlock
+    ? `${fmtHM(block)}<small>block</small>`
+    : `${f.km ? fmtInt(f.km) : '—'}<small>km</small>`;
+
   return `<button class="row-item" data-flight="${esc(f.id)}">
     <div class="row-main">
       <div class="row-title"><span class="iata">${esc(f.from)}</span><span class="arrow">→</span>
         <span class="iata">${esc(f.to || '??')}</span>${tags.join('')}</div>
+      ${cities ? `<div class="row-sub cities">${cities}</div>` : ''}
       <div class="row-sub">${esc(f.flightNo)} · <span class="times">${esc(times)}</span>${f.ac ? ' · ' + esc(f.ac) : ''}${crewN ? ` · ${crewN} crew` : ''}</div>
     </div>
-    <div class="row-num">${f.km ? fmtInt(f.km) : '—'}<small>km</small></div>
+    <div class="row-num">${metric}</div>
   </button>`;
 }
 
 function dutyRowHTML(d) {
   const t = [d.start, d.end].filter(Boolean).join('–');
+  const named = c => { const n = apName(c); return n && n !== c ? n : null; };
+  const where = [d.from, d.to].filter(Boolean);
+  const cities = where.some(named) ? where.map(c => apName(c)).join(' → ') : '';
   return `<div class="row-item">
     <div class="row-main">
       <div class="row-title">${esc(d.code)} <span class="tag duty">duty</span></div>
-      <div class="row-sub">${esc([d.from, d.to].filter(Boolean).join(' → ') || '—')}${t ? ' · ' : ''}<span class="times">${esc(t)}</span></div>
+      ${cities ? `<div class="row-sub cities">${esc(cities)}</div>` : ''}
+      <div class="row-sub">${esc(where.join(' → ') || '—')}${t ? ' · ' : ''}<span class="times">${esc(t)}</span></div>
     </div></div>`;
 }
 
@@ -1417,15 +1439,18 @@ function showPeriodSheet(key) {
       [fmtHM(days.dutyDays ? Math.round(days.dutyMin / days.dutyDays) : null), 'duty / day'],
     ])}</div>
     <h2 class="section-h">Days</h2>
-    <div class="list">${days.days.map(d => {
-      return `<div class="row-item">
-        <div class="row-main">
-          <div class="row-title">${esc(fmtShort(d.date))}${d.sectors ? ` <span class="tag">${d.sectors} sector${d.sectors === 1 ? '' : 's'}</span>` : ' <span class="tag duty">ground</span>'}</div>
-          <div class="row-sub"><span class="times">${esc(timeAt(d.start))}–${esc(timeAt(d.end))}</span> UTC · duty ${fmtHM(d.dutyMin)}</div>
+    ${days.days.map(d => `
+      <div class="daygroup">
+        <div class="dayhead">
+          <span>${esc(fmtDay(d.date))}</span>
+          <small><span class="times">${esc(timeAt(d.start))}–${esc(timeAt(d.end))}</span> UTC · duty ${fmtHM(d.dutyMin)} · block ${fmtHM(d.blockMin)}</small>
         </div>
-        <div class="row-num">${fmtHM(d.blockMin)}<small>block</small></div>
-      </div>`;
-    }).join('')}</div>`);
+        <div class="list">${
+          d.items.length
+            ? d.items.map(x => x.flightNo ? flightRowHTML(x, { showBlock: true }) : dutyRowHTML(x)).join('')
+            : '<div class="nothing">Nothing recorded for this day.</div>'
+        }</div>
+      </div>`).join('')}`);
 }
 
 function crewCounts() {
@@ -1827,7 +1852,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '4';   // keep in step with VERSION in sw.js
+const SW_TAG = '5';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {
