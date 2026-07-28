@@ -14,6 +14,24 @@ const fmtInt = n => n.toLocaleString('en-GB');
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+/* The portal prints month abbreviations in the roster's own language. A Dutch
+   roster says OKT, MRT, MEI — and an unrecognised month silently threw the row
+   away, which lost every March, May and October. Only unambiguous spellings
+   are listed; French JUI is left out because it could be juin or juillet. */
+const MONTH_ALIAS = {
+  MRT: 2, MRZ: 2,            // maart / März
+  AVR: 3,                    // avril
+  MEI: 4, MAI: 4,            // mei / mai
+  OKT: 9,                    // oktober / Oktober
+  DEZ: 11,                   // Dezember
+  FEV: 1,                    // février
+  AOU: 7,                    // août
+};
+const monthIndex = m => {
+  const i = MONTHS.indexOf(m);
+  return i >= 0 ? i : (m in MONTH_ALIAS ? MONTH_ALIAS[m] : -1);
+};
 const WEEKDAY = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
 
 const utc  = (y, m, d) => new Date(Date.UTC(y, m, d));
@@ -221,9 +239,9 @@ const RE = {
   crewRow:  /^(\d{2})([A-Z]{3})(\d{2})\s+([A-Z]{2}\d{2,4}[A-Z]?)\s+(.+)$/,
   noteRow:  /^(\d{2})([A-Z]{3})(\d{2})\s+(.+)$/,
   /* Owner banner: "<surname> <first name> <code> <staff no> <licences> <phone>",
-     e.g. "Doe John ABC 12345 XXX;YY;ZZ 1234". The licence block is sometimes
-     absent, so it is optional. */
-  owner:    /^(.{3,40}?)\s+([A-Z]{2,3})\s+(\d{4,6})(?:\s+[A-Z]{1,3};|\s*$)/,
+     e.g. "Doe John ABC 12345 XXX;YY;ZZ 1234". The licence block may itself
+     contain digits ("G4;AMS") and is sometimes absent altogether. */
+  owner:    /^(.{3,40}?)\s+([A-Z]{2,3})\s+(\d{4,6})(?:\s+[A-Z0-9]{1,4};|\s*$)/,
   ownerAlt: /^(\d{4,6})([A-Z]{2,3})(.{3,40}?)\s+\d{3,5}[A-Z]{1,3};/,
   personSplit: /^[A-Za-z]?[a-z]?\.$/,
 };
@@ -242,7 +260,7 @@ function isChrome(s) {
       || /^Crew Roster Portal/.test(s)
       || /^\d+\.\d+\.\d+(\.\d+)?$/.test(s)
       || /^\d{2}[A-Z]{3}\d{2}\s+\d{2}:\d{2}$/.test(s)
-      || /^[A-Z]{3}-[A-Z]{2}\s+\d+$/.test(s)
+      || /^[A-Z]{3}-[A-Z0-9]{2,4}\s+\S+$/.test(s)   // base/fleet banner: "EIN-PU 0", "AMS-CA2 UTC"
       || /^C\/I\s+ATD/.test(s)
       || /^Date\s+\S+\s+Activity/.test(s)
       || /^(ATA|Rq\s*AC|RqAC)/.test(s);
@@ -313,8 +331,26 @@ function parseRoster(lines) {
   };
   let cursor = null, hardEnd = null, mode = 'roster', lastCrewRow = null, openLeg = null;
 
+  /* A flight number is two letters and up to four digits. Two letters with a
+     single digit is not accepted by shape, because in these rosters that is a
+     ground-duty code (VE1, VE2, VE3, FS1, WV1, CT8 …) and treating those as
+     flights would invent sectors. The "Crew onboard" section names flights
+     unambiguously, so anything listed there is trusted whatever its shape. */
+  const knownFlights = new Set();
+  {
+    let inCrew = false;
+    for (const raw of lines) {
+      const s = raw.replace(/\s+/g, ' ').trim();
+      if (SECTION[s]) { inCrew = SECTION[s] === 'crew'; continue; }
+      if (!inCrew) continue;
+      const m = /^\d{2}[A-Z]{3}\d{2}\s+([A-Z]{2}\d{1,4}[A-Z]?)\s/.exec(s);
+      if (m) knownFlights.add(m[1]);
+    }
+  }
+  const isFlightNo = a => RE.flightNo.test(a) || knownFlights.has(a);
+
   const noteDate = (dd, mmm, yy) => {
-    const m = MONTHS.indexOf(mmm);
+    const m = monthIndex(mmm);
     return m < 0 ? null : iso(utc(2000 + +yy, m, +dd));
   };
   const addPerson = (name, tags) => {
@@ -335,8 +371,10 @@ function parseRoster(lines) {
 
     const per = RE.period.exec(s);
     if (per) {
-      const a = utc(2000 + +per[3], MONTHS.indexOf(per[2]), +per[1]);
-      const b = utc(2000 + +per[6], MONTHS.indexOf(per[5]), +per[4]);
+      const mA = monthIndex(per[2]), mB = monthIndex(per[5]);
+      if (mA < 0 || mB < 0) { res.warnings.push(`Unrecognised month in the reporting period "${s}".`); continue; }
+      const a = utc(2000 + +per[3], mA, +per[1]);
+      const b = utc(2000 + +per[6], mB, +per[4]);
       if (!res.period) { res.period = [iso(a), iso(b)]; cursor = a; hardEnd = addDays(b, 40); }
       continue;
     }
@@ -404,7 +442,7 @@ function parseRoster(lines) {
     if (!row) continue;
     const date = iso(cursor);
 
-    if (RE.flightNo.test(row.activity)) {
+    if (isFlightNo(row.activity)) {
       /* A leg printed across midnight arrives on the next roster row. */
       if (row.pairs.length === 1 && openLeg && openLeg.flightNo === row.activity && !openLeg.to) {
         openLeg.to = row.pairs[0].ap; openLeg.arr = row.pairs[0].t;
@@ -1957,7 +1995,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '6';   // keep in step with VERSION in sw.js
+const SW_TAG = '7';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {
