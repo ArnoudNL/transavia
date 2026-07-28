@@ -679,7 +679,10 @@ async function importFiles(fileList) {
         (parsed.owner ? `<br>Roster of <b>${esc(parsed.owner)}</b>` : '') +
         (parsed.period ? ` · ${esc(parsed.period.join(' → '))}` : '') +
         (parsed.crewRows ? `<br>${fmtInt(parsed.crewRows)} crew-composition rows → ${fmtInt(parsed.people.size)} people` : '');
-      if (retired.size) head.innerHTML += `<br>Closed airports resolved: ${[...retired].map(c => `<b>${esc(c)}</b> ${esc(apName(c))}`).join(', ')}`;
+      if (retired.size) head.innerHTML += `<br>Closed airports resolved: ${[...retired].map(c => {
+        const a = AIRPORTS[c];
+        return `<b>${esc(c)}</b> ${esc(a && a[2] ? a[2] : apName(c))}`;   // prefer the distinctive name over the city
+      }).join(', ')}`;
       if (unknown.size) head.innerHTML += `<br><span class="warn">⚠ Not in the airport table, so not mapped: ${[...unknown].join(', ')}</span>`;
       for (const w of parsed.warnings.slice(0, 4)) head.innerHTML += `<br><span class="warn">⚠ ${esc(w)}</span>`;
     } catch (err) {
@@ -1821,7 +1824,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '3';   // keep in step with VERSION in sw.js
+const SW_TAG = '4';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {

@@ -130,12 +130,20 @@ If you'd rather not use a PDF, the importer also accepts CSV/JSON with columns
   the implied block speed of 104 legs outside 350–950 km/h, KEF→AMS at
   2038 km/h. Read as UTC, only one leg falls outside that band.)*
 * Distances are great-circle between airport coordinates.
-* The airport table includes **retired IATA codes** (TXL, THF, SXF …) recovered
-  from OurAirports' keywords on closed fields, so rosters flown while an airport
-  was open still map. A code that is live today always resolves to its current
-  holder — that is what stops Tempelhof from claiming `BER`. Closed airports are
-  labelled in the UI. The one case this cannot resolve is a code retired *and
-  later reassigned*: it resolves to the current holder.
+* The airport table carries **every IATA code**, not just the currently busy
+  ones — 9,753 of them, covering 100% of the IATA codes in both upstream
+  sources plus 476 retired codes. Two filters were deliberately *not* applied,
+  because both encode a *present-day* status and silently drop airports that
+  were perfectly normal destinations when the roster was flown:
+  * `scheduled_service` — Kharkiv (HRK) and Al Hoceima (AHU) both read `no`
+    today. Filtering on it dropped 5,004 IATA-coded airports.
+  * airport size/type — small fields and seaplane bases hold real codes.
+* **Retired codes** (TXL, THF, SXF …) are recovered from OurAirports' keywords
+  on closed fields, since the `iata_code` column is blanked once an airport
+  shuts. A code that is live today always resolves to its current holder — that
+  is what stops Tempelhof from claiming `BER`. Closed airports are labelled in
+  the UI. The one case this cannot resolve is a code retired *and later
+  reassigned*: it resolves to the current holder.
 * Airports not in `data/airports.json` are still stored, but cannot be mapped —
   the import log lists them.
 
