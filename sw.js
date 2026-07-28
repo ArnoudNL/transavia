@@ -5,7 +5,7 @@
    Map tiles, when the user turns them on, are cached opportunistically.
    ========================================================================== */
 
-const VERSION    = 'v2';
+const VERSION    = 'v3';
 const SHELL      = `roster-atlas-shell-${VERSION}`;
 const TILES      = `roster-atlas-tiles-${VERSION}`;
 const TILE_LIMIT = 700;

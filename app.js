@@ -120,20 +120,78 @@ const metaSet = (k, v) => putAll('meta', [{ k, v }]);
 
 /* ── 3. reference data ──────────────────────────────────────────────────── */
 
-let AIRPORTS = {};          // IATA -> [lat, lon, name, city, country]
+/* Airport table: IATA -> [lat, lon, name, city, country, zoneIndex, closed]
+   It deliberately includes *retired* codes (TXL, THF, SXF …) recovered from
+   OurAirports' keywords on closed fields, so a roster flown while the airport
+   was open still maps. A code that is live today always resolves to its
+   current holder — that is what keeps Tempelhof from claiming BER. */
+let AIRPORTS = {};
+let ZONES = [];
 let WORLD = null;           // bundled coastline GeoJSON
 
 async function loadReference() {
   const [ap, w] = await Promise.all([
-    fetch('data/airports.json').then(r => r.json()).catch(() => ({})),
+    fetch('data/airports.json').then(r => r.json()).catch(() => null),
     fetch('data/world.geo.json').then(r => r.json()).catch(() => null),
   ]);
-  AIRPORTS = ap; WORLD = w;
+  if (ap && ap.airports) { AIRPORTS = ap.airports; ZONES = ap.zones || []; }
+  else if (ap) { AIRPORTS = ap; ZONES = []; }          // tolerate the old flat file
+  WORLD = w;
 }
 const apPos  = c => (AIRPORTS[c] ? [AIRPORTS[c][0], AIRPORTS[c][1]] : null);
 const apName = c => { const a = AIRPORTS[c]; return a ? (a[3] || a[2] || c) : c; };
 const apFull = c => { const a = AIRPORTS[c]; return a ? [a[2] || a[3], a[3] && a[2] ? a[3] : '', a[4]].filter(Boolean).join(', ') : 'Unknown airport'; };
 const apCountry = c => (AIRPORTS[c] ? AIRPORTS[c][4] : null);
+const apTz      = c => { const a = AIRPORTS[c]; return a && a[5] >= 0 ? ZONES[a[5]] : null; };
+const apClosed  = c => !!(AIRPORTS[c] && AIRPORTS[c][6]);
+
+/* ── times ──────────────────────────────────────────────────────────────── */
+/* Crew Roster Portal prints every time in UTC (Zulu) — the roster's own day
+   notes spell it out ("1350z-2110z"). Durations are therefore plain
+   subtraction; converting through station time zones inflates every
+   zone-crossing leg by the offset (it put KEF→AMS at 2038 km/h).
+   The zone table is still carried so local arrival times can be shown. */
+
+const _tzFmt = new Map();
+function tzOffset(ts, tz) {
+  let f = _tzFmt.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    _tzFmt.set(tz, f);
+  }
+  const p = {};
+  for (const x of f.formatToParts(ts)) if (x.type !== 'literal') p[x.type] = +x.value;
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) - ts;
+}
+/** A roster date + Zulu time -> UTC milliseconds. */
+function rosterInstant(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mm] = timeStr.split(':').map(Number);
+  if ([y, m, d, hh, mm].some(n => !isFinite(n))) return null;
+  return Date.UTC(y, m - 1, d, hh, mm);
+}
+/** Format a UTC instant as wall-clock time at an airport. */
+function localAt(ts, code) {
+  const tz = apTz(code);
+  if (ts == null || !tz) return null;
+  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz }).format(ts);
+}
+const MAXDUR = 20 * 3600000;
+
+/** Block time (off blocks -> on blocks) in minutes, or null when unknowable. */
+function legBlock(f) {
+  const a = rosterInstant(f.date, f.dep);
+  const b = rosterInstant(f.arrDate || f.date, f.arr);
+  if (a == null || b == null) return null;
+  let d = b - a;
+  if (d < 0) d += 86400000;               // arrival rolled past midnight
+  return (d < 0 || d > MAXDUR) ? null : Math.round(d / 60000);
+}
+const fmtHM = min => (min == null ? '—' : `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`);
+const fmtHours = min => (min == null ? '—' : (min / 60).toFixed(min >= 6000 ? 0 : 1) + ' h');
 
 /* ── 4. roster parser ───────────────────────────────────────────────────── */
 /* Tuned against Crew Roster Portal "Individual Roster" exports.
@@ -570,11 +628,15 @@ async function importFiles(fileList) {
       }
 
       /* flights — merge on identity, union the crew lists */
-      let neu = 0, merged = 0, unknown = new Set();
+      let neu = 0, merged = 0, unknown = new Set(), retired = new Set();
       for (const f of parsed.flights) {
         const id = flightId(f);
         const rec = fMap.get(id);
-        [f.from, f.to].forEach(c => { if (c && !AIRPORTS[c]) unknown.add(c); });
+        [f.from, f.to].forEach(c => {
+          if (!c) return;
+          if (!AIRPORTS[c]) unknown.add(c);
+          else if (apClosed(c)) retired.add(c);
+        });
         const km = (f.from && f.to && apPos(f.from) && apPos(f.to)) ? haversine(apPos(f.from), apPos(f.to)) : null;
         if (rec) {
           rec.crew    = [...new Set([...(rec.crew || []), ...(f.crew || [])])];
@@ -617,6 +679,7 @@ async function importFiles(fileList) {
         (parsed.owner ? `<br>Roster of <b>${esc(parsed.owner)}</b>` : '') +
         (parsed.period ? ` · ${esc(parsed.period.join(' → '))}` : '') +
         (parsed.crewRows ? `<br>${fmtInt(parsed.crewRows)} crew-composition rows → ${fmtInt(parsed.people.size)} people` : '');
+      if (retired.size) head.innerHTML += `<br>Closed airports resolved: ${[...retired].map(c => `<b>${esc(c)}</b> ${esc(apName(c))}`).join(', ')}`;
       if (unknown.size) head.innerHTML += `<br><span class="warn">⚠ Not in the airport table, so not mapped: ${[...unknown].join(', ')}</span>`;
       for (const w of parsed.warnings.slice(0, 4)) head.innerHTML += `<br><span class="warn">⚠ ${esc(w)}</span>`;
     } catch (err) {
@@ -639,12 +702,18 @@ async function importFiles(fileList) {
 
 /* ── 7. in-memory state ─────────────────────────────────────────────────── */
 
+/* Ground codes not counted as duty out of the box. Hotel is rest; everything
+   else is judged by whether it occupies real time (see isWorkItem), and the
+   user can override any of it from the Hours tab. */
+const REST_CODES_DEFAULT = ['HTL'];
+
 const S = {
   flights: [], duties: [], people: new Map(), sources: [], aliases: {},
   filter: { from: null, to: null, crew: [], passive: true },
   overlap: { crew: [], from: null, to: null },
   view: 'map', selectedRoute: null, tiles: false, labels: true,
-  routeSort: 'count', flightLimit: 200,
+  routeSort: 'count', flightLimit: 200, hoursMode: 'month',
+  excluded: new Set(REST_CODES_DEFAULT),   // ground codes the user says aren't duty
 };
 
 const alias = k => S.aliases[k] || k;
@@ -661,8 +730,25 @@ async function loadData() {
   S.duties = d.sort((a, b) => a.date.localeCompare(b.date));
   S.sources = s.sort((a, b) => b.imported - a.imported);
 
+  /* Legs imported against an older airport table may have no route/distance —
+     a retired code like TXL used to resolve to nothing. Backfill them now that
+     the table knows about closed airports, and persist so it happens once. */
+  const healed = [];
+  for (const x of S.flights) {
+    if (!x.from || !x.to || x.from === x.to) continue;
+    if (!apPos(x.from) || !apPos(x.to)) continue;
+    const route = routeKey(x.from, x.to);
+    const km = haversine(apPos(x.from), apPos(x.to));
+    if (x.route !== route || x.km !== km) { x.route = route; x.km = km; healed.push(x); }
+  }
+  if (healed.length) {
+    await putAll('flights', healed);
+    console.info(`[roster-atlas] backfilled route/distance on ${healed.length} leg(s)`);
+  }
+
   const saved = await metaGet('ui', null);
   if (saved) { S.tiles = !!saved.tiles; S.labels = saved.labels !== false; }
+  S.excluded = new Set(await metaGet('excludedCodes', REST_CODES_DEFAULT));
 }
 const saveUi = () => metaSet('ui', { tiles: S.tiles, labels: S.labels });
 
@@ -732,6 +818,103 @@ function summarise(list) {
 
 const statTiles = pairs => pairs.map(([v, l]) =>
   `<div class="stat"><b>${v}</b><span>${esc(l)}</span></div>`).join('');
+
+/* ── 8b. duty days & block hours ────────────────────────────────────────── */
+/* A duty day is every leg and ground duty carrying the same roster date — a
+   report at 22:00 landing at 02:00 stays one duty. Report/off-duty come from
+   the check-in of the first item and the check-out of the last; block time is
+   the sum of the legs' off-blocks → on-blocks. */
+
+function itemBounds(x) {
+  const isLeg = !!x.flightNo;
+  const startT = x.ci || (isLeg ? x.dep : x.start);
+  const endT   = x.co || (isLeg ? x.arr : x.end);
+  const start = rosterInstant(x.date, startT);
+  let end = rosterInstant(isLeg ? (x.arrDate || x.date) : x.date, endT);
+  if (start != null && end != null && end < start) end += 86400000;   // over midnight
+  if (start != null && end != null && end - start > MAXDUR) end = null;
+  return { start, end };
+}
+
+/* Which roster entries are actually work.
+   Codes are not interpreted by meaning — that would be guessing at an airline's
+   internal vocabulary. Instead: a ground entry counts only if it occupies a real
+   span of time. Day-off / leave markers (V06, V14, V22, WV1 …) are always
+   printed with an identical start and end, so they fall out on their own. Hotel
+   is rest, not duty, and is the one code named explicitly. */
+function isWorkItem(x) {
+  if (x.flightNo) return true;
+  if (S.excluded.has(x.code)) return false;
+  const b = itemBounds(x);
+  return b.start != null && b.end != null && b.end > b.start;
+}
+
+/** @returns [{date, blockMin, dutyMin, sectors, start, end, legs, items}] newest first */
+function dutyDays(legs, duties) {
+  const byDate = new Map();
+  const add = x => {
+    if (!isWorkItem(x)) return;
+    if (!byDate.has(x.date)) byDate.set(x.date, []);
+    byDate.get(x.date).push(x);
+  };
+  legs.forEach(add);
+  (duties || []).forEach(add);
+
+  const out = [];
+  for (const [date, items] of byDate) {
+    let blockMin = 0, sectors = 0, blockKnown = false;
+    let start = null, end = null;
+    for (const x of items) {
+      if (x.flightNo) {
+        sectors++;
+        const b = legBlock(x);
+        if (b != null) { blockMin += b; blockKnown = true; }
+      }
+      const bd = itemBounds(x);
+      if (bd.start != null && (start == null || bd.start < start)) start = bd.start;
+      if (bd.end   != null && (end   == null || bd.end   > end))   end   = bd.end;
+    }
+    const dutyMin = (start != null && end != null && end >= start && end - start <= MAXDUR)
+      ? Math.round((end - start) / 60000) : null;
+    out.push({
+      date, sectors, start, end, dutyMin,
+      blockMin: blockKnown ? blockMin : null,
+      legs: items.filter(x => x.flightNo), items,
+    });
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/** ISO-8601 week — Monday start, week 1 holds the first Thursday. */
+function isoWeek(dateStr) {
+  const d = parseIso(dateStr);
+  const t = new Date(d.getTime());
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  const y = t.getUTCFullYear();
+  const week = Math.ceil(((t - Date.UTC(y, 0, 1)) / 86400000 + 1) / 7);
+  return { key: `${y}-W${String(week).padStart(2, '0')}`, year: y, week };
+}
+const MONTH_FMT = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+/** Roll duty days up into weeks / months / years, newest first. */
+function groupPeriods(days, mode) {
+  const map = new Map();
+  for (const d of days) {
+    let key, label;
+    if (mode === 'year')       { key = d.date.slice(0, 4); label = key; }
+    else if (mode === 'month') { key = d.date.slice(0, 7); label = MONTH_FMT.format(parseIso(d.date)); }
+    else                       { const w = isoWeek(d.date); key = w.key; label = `Week ${w.week}, ${w.year}`; }
+    let p = map.get(key);
+    if (!p) { p = { key, label, days: [], blockMin: 0, dutyMin: 0, sectors: 0, dutyDays: 0, flyDays: 0 }; map.set(key, p); }
+    p.days.push(d);
+    p.dutyDays++;
+    if (d.sectors) p.flyDays++;
+    p.sectors += d.sectors;
+    if (d.blockMin != null) p.blockMin += d.blockMin;
+    if (d.dutyMin  != null) p.dutyMin  += d.dutyMin;
+  }
+  return [...map.values()].sort((a, b) => b.key.localeCompare(a.key));
+}
 
 /* Leaflet's canvas renderer needs literal colours — resolve the tokens once. */
 const cssv = (name, fallback) =>
@@ -994,8 +1177,8 @@ function showAirportSheet(code) {
     .sort((x, y) => y.count - x.count);
   const max = routes.reduce((m, r) => Math.max(m, r.count), 1);
   openSheet(`
-    <div class="sheet-title"><span class="iata">${esc(code)}</span> ${esc(apName(code))}</div>
-    <p class="sheet-sub">${esc(apFull(code))}</p>
+    <div class="sheet-title"><span class="iata">${esc(code)}</span> ${esc(apName(code))}${apClosed(code) ? ' <span class="tag closed">closed</span>' : ''}</div>
+    <p class="sheet-sub">${esc(apFull(code))}${apClosed(code) ? ' — this airport has since closed; the code is kept so rosters flown while it was open still map.' : ''}</p>
     <div class="sheet-stats">${statTiles([
       [fmtInt(a.visits), 'movements'], [fmtInt(a.dep), 'departures'],
       [fmtInt(a.arr), 'arrivals'], [fmtInt(routes.length), 'routes'],
@@ -1054,14 +1237,17 @@ function showFlightSheet(id) {
   const f = S.flights.find(x => x.id === id);
   if (!f) return;
   const crew = (f.crew || []).slice().sort((a, b) => (isOwner(b) ? 1 : 0) - (isOwner(a) ? 1 : 0));
+  const locDep = localAt(rosterInstant(f.date, f.dep), f.from);
+  const locArr = localAt(rosterInstant(f.arrDate || f.date, f.arr), f.to);
   openSheet(`
     <div class="sheet-title"><span class="iata">${esc(f.from)}</span><span class="arrow">→</span><span class="iata">${esc(f.to || '??')}</span></div>
     <p class="sheet-sub">${esc(f.flightNo)} · ${esc(fmtDay(f.date))}${f.ac ? ' · ' + esc(f.ac) : ''}</p>
     ${f.note ? `<div class="kv"><span>Roster note</span><b>${esc(f.note)}</b></div>` : ''}
     <div class="kv"><span>Check-in</span><b>${esc(f.ci || '—')}</b></div>
-    <div class="kv"><span>Off blocks</span><b>${esc(f.dep || '—')}</b></div>
-    <div class="kv"><span>On blocks</span><b>${esc(f.arr || '—')}${f.arrDate !== f.date ? ' <small>+1</small>' : ''}</b></div>
+    <div class="kv"><span>Off blocks</span><b>${esc(f.dep || '—')}${locDep ? ` <small>(${esc(locDep)} local ${esc(f.from)})</small>` : ''}</b></div>
+    <div class="kv"><span>On blocks</span><b>${esc(f.arr || '—')}${f.arrDate !== f.date ? ' <small>+1</small>' : ''}${locArr ? ` <small>(${esc(locArr)} local ${esc(f.to)})</small>` : ''}</b></div>
     <div class="kv"><span>Check-out</span><b>${esc(f.co || '—')}</b></div>
+    <div class="kv"><span>Block time</span><b>${fmtHM(legBlock(f))}</b></div>
     <div class="kv"><span>Distance</span><b>${f.km ? fmtInt(f.km) + ' km' : '—'}</b></div>
     ${f.tags && f.tags.length ? `<div class="kv"><span>Codes</span><b>${esc(f.tags.join(' '))}</b></div>` : ''}
     <div class="kv"><span>From file</span><b>${esc((f.sources || []).join(', ') || '—')}</b></div>
@@ -1070,7 +1256,7 @@ function showFlightSheet(id) {
       <button class="row-item" data-person="${esc(k)}">
         <div class="row-main"><div class="row-title">${esc(personName(k))}${isOwner(k) ? ' <span class="tag you">roster owner</span>' : ''}</div></div>
       </button>`).join('') : '<div class="nothing">This roster lists no crew for the leg.</div>'}</div>
-    <p class="hint" style="margin-top:14px">Times are printed exactly as on the roster (local station time).</p>`);
+    <p class="hint" style="margin-top:14px">Roster times are UTC (Zulu), exactly as printed; local station times are derived.</p>`);
 }
 
 /* ── 12. views ──────────────────────────────────────────────────────────── */
@@ -1110,7 +1296,7 @@ function renderRoutes() {
   $('#airportList').innerHTML = aps.length ? aps.map(a => `
     <button class="row-item" data-airport="${esc(a.code)}">
       <div class="row-main">
-        <div class="row-title"><span class="iata">${esc(a.code)}</span> ${esc(apName(a.code))}</div>
+        <div class="row-title"><span class="iata">${esc(a.code)}</span> ${esc(apName(a.code))}${apClosed(a.code) ? ' <span class="tag closed">closed</span>' : ''}</div>
         <div class="row-sub">${esc(apCountry(a.code) || '')} · ${fmtInt(a.partners.size)} route${a.partners.size === 1 ? '' : 's'}</div>
         <div class="freqbar"><i style="width:${(a.visits / amax * 100).toFixed(1)}%"></i></div>
       </div>
@@ -1143,6 +1329,97 @@ function renderFlights() {
   const more = $('#flightMore');
   more.hidden = shown >= total;
   more.textContent = `Show more (${fmtInt(total - shown)} left)`;
+}
+
+function renderHours() {
+  const legs = filtered();
+  const days = dutyDays(legs, filteredDuties());
+  const periods = groupPeriods(days, S.hoursMode);
+
+  const tot = periods.reduce((a, p) => ({
+    block: a.block + p.blockMin, duty: a.duty + p.dutyMin,
+    days: a.days + p.dutyDays, fly: a.fly + p.flyDays, sectors: a.sectors + p.sectors,
+  }), { block: 0, duty: 0, days: 0, fly: 0, sectors: 0 });
+
+  const unknownBlock = legs.filter(f => legBlock(f) == null).length;
+  const avgDuty = tot.days ? Math.round(tot.duty / tot.days) : null;
+
+  $('#hoursStats').innerHTML = statTiles([
+    [fmtHours(tot.block), 'block time'],
+    [fmtHours(tot.duty), 'duty time'],
+    [fmtInt(tot.days), 'duty days'],
+    [fmtInt(tot.fly), 'flying days'],
+    [fmtInt(tot.sectors), 'sectors'],
+    [fmtHM(avgDuty), 'avg duty day'],
+  ]);
+
+  const max = periods.reduce((m, p) => Math.max(m, p.blockMin), 1);
+  $('#hoursList').innerHTML = periods.length ? periods.map(p => `
+    <button class="row-item" data-period="${esc(p.key)}">
+      <div class="row-main">
+        <div class="row-title">${esc(p.label)}</div>
+        <div class="row-sub">${fmtInt(p.dutyDays)} duty day${p.dutyDays === 1 ? '' : 's'} (${fmtInt(p.flyDays)} flying) · ${fmtInt(p.sectors)} sector${p.sectors === 1 ? '' : 's'} · duty ${fmtHM(p.dutyMin)}</div>
+        <div class="freqbar"><i style="width:${clamp(p.blockMin / max * 100, 0, 100).toFixed(1)}%"></i></div>
+      </div>
+      <div class="row-num">${fmtHM(p.blockMin)}<small>block</small></div>
+    </button>`).join('') : '<div class="nothing">No duty days match the current filter.</div>';
+
+  /* Ground codes are classified by whether they occupy real time, not by what
+     they mean — the app has no way to know an airline's vocabulary. Anything
+     with a time span is counted, and you can switch a code off if it is really
+     leave or rest. */
+  const seen = new Map();      // code -> minutes it currently contributes
+  for (const d of filteredDuties()) {
+    const b = itemBounds(d);
+    const mins = (b.start != null && b.end != null && b.end > b.start) ? Math.round((b.end - b.start) / 60000) : 0;
+    const e = seen.get(d.code) || { n: 0, mins: 0 };
+    e.n++; e.mins += mins;
+    seen.set(d.code, e);
+  }
+  const chips = [...seen.entries()]
+    .filter(([, e]) => e.mins > 0)                       // zero-span markers can never count
+    .sort((a, b) => b[1].mins - a[1].mins)
+    .map(([code, e]) => {
+      const on = !S.excluded.has(code);
+      return `<button class="codechip${on ? '' : ' is-off'}" data-code="${esc(code)}"
+        title="${on ? 'Counted' : 'Not counted'} — ${fmtHM(e.mins)} over ${e.n}">${esc(code)}</button>`;
+    }).join('');
+  const zeroSpan = [...seen.entries()].filter(([, e]) => e.mins === 0).map(([c]) => c).sort();
+
+  $('#hoursNote').innerHTML =
+    'Roster times are UTC (Zulu), so block time is simply off blocks → on blocks, with legs landing after midnight carried into the next day. ' +
+    'A duty day runs from the first check-in to the last check-out of that roster date. ' +
+    'Ground duties add to duty time but not block time.' +
+    '<br><br><b>Which ground codes count as duty?</b> Tap to switch one off if it is really leave or rest — the totals above update immediately.' +
+    `<div class="codechips">${chips}</div>` +
+    (zeroSpan.length ? `<br>Always ignored, because they have no time span at all (day-off / leave markers): ${esc(zeroSpan.join(' '))}.` : '') +
+    (unknownBlock ? `<br><br>${fmtInt(unknownBlock)} leg${unknownBlock === 1 ? '' : 's'} could not be timed and ${unknownBlock === 1 ? 'is' : 'are'} left out of block totals.` : '');
+}
+
+function showPeriodSheet(key) {
+  const days = groupPeriods(dutyDays(filtered(), filteredDuties()), S.hoursMode)
+    .find(p => p.key === key);
+  if (!days) return;
+  const timeAt = ts => (ts == null ? '—'
+    : new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(ts));
+  openSheet(`
+    <div class="sheet-title">${esc(days.label)}</div>
+    <p class="sheet-sub">${fmtInt(days.dutyDays)} duty days · ${fmtInt(days.sectors)} sectors</p>
+    <div class="sheet-stats">${statTiles([
+      [fmtHM(days.blockMin), 'block'], [fmtHM(days.dutyMin), 'duty'],
+      [fmtHM(days.dutyDays ? Math.round(days.blockMin / days.dutyDays) : null), 'block / day'],
+      [fmtHM(days.dutyDays ? Math.round(days.dutyMin / days.dutyDays) : null), 'duty / day'],
+    ])}</div>
+    <h2 class="section-h">Days</h2>
+    <div class="list">${days.days.map(d => {
+      return `<div class="row-item">
+        <div class="row-main">
+          <div class="row-title">${esc(fmtShort(d.date))}${d.sectors ? ` <span class="tag">${d.sectors} sector${d.sectors === 1 ? '' : 's'}</span>` : ' <span class="tag duty">ground</span>'}</div>
+          <div class="row-sub"><span class="times">${esc(timeAt(d.start))}–${esc(timeAt(d.end))}</span> UTC · duty ${fmtHM(d.dutyMin)}</div>
+        </div>
+        <div class="row-num">${fmtHM(d.blockMin)}<small>block</small></div>
+      </div>`;
+    }).join('')}</div>`);
 }
 
 function crewCounts() {
@@ -1247,7 +1524,7 @@ function updateFilterSummary() {
 function refreshAll() {
   updateFilterSummary();
   drawMap(false);
-  renderRoutes(); renderFlights(); renderCrew(); renderOverlap(); renderData();
+  renderRoutes(); renderFlights(); renderHours(); renderCrew(); renderOverlap(); renderData();
   buildQuickRanges();
 }
 
@@ -1323,7 +1600,7 @@ function switchView(name) {
   S.view = name;
   $$('.view').forEach(v => v.classList.toggle('is-active', v.id === 'view-' + name));
   $$('#tabbar button').forEach(b => b.classList.toggle('is-active', b.dataset.view === name));
-  $('#viewTitle').textContent = { map:'Map', routes:'Routes', flights:'Flights', crew:'Crew', data:'Data' }[name];
+  $('#viewTitle').textContent = { map:'Map', routes:'Routes', flights:'Flights', hours:'Hours', crew:'Crew', data:'Data' }[name];
   if (name === 'map' && map) setTimeout(() => map.invalidateSize(), 60);
   if (name !== 'map') hideSheet();
 }
@@ -1378,6 +1655,22 @@ function wireEvents() {
   $('#flightSearch').addEventListener('input', () => { S.flightLimit = 200; renderFlights(); });
   $('#showDuties').addEventListener('change', renderFlights);
   $('#flightMore').addEventListener('click', () => { S.flightLimit += 400; renderFlights(); });
+
+  /* hours */
+  $('#hoursNote').addEventListener('click', async ev => {
+    const b = ev.target.closest('[data-code]'); if (!b) return;
+    const code = b.dataset.code;
+    S.excluded.has(code) ? S.excluded.delete(code) : S.excluded.add(code);
+    await metaSet('excludedCodes', [...S.excluded]);
+    renderHours();
+    toast(S.excluded.has(code) ? `${code} no longer counts as duty` : `${code} counts as duty`);
+  });
+  $('#hoursMode').addEventListener('click', ev => {
+    const b = ev.target.closest('[data-hmode]'); if (!b) return;
+    S.hoursMode = b.dataset.hmode;
+    $$('#hoursMode button').forEach(x => x.classList.toggle('is-on', x === b));
+    renderHours();
+  });
 
   /* crew */
   $('#crewSearch').addEventListener('input', renderCrew);
@@ -1438,6 +1731,9 @@ function wireEvents() {
 
     const fl = ev.target.closest('[data-flight]');
     if (fl) { showFlightSheet(fl.dataset.flight); return; }
+
+    const pe = ev.target.closest('[data-period]');
+    if (pe) { showPeriodSheet(pe.dataset.period); return; }
 
     const act = ev.target.closest('[data-act]');
     if (!act) return;
@@ -1525,7 +1821,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '2';   // keep in step with VERSION in sw.js
+const SW_TAG = '3';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {

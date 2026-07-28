@@ -104,6 +104,20 @@
     </div>
   </section>
 
+  <!-- ══════════════ HOURS ══════════════ -->
+  <section class="view" id="view-hours">
+    <div class="scroll">
+      <div class="segmented wide" id="hoursMode" role="tablist" aria-label="Group hours by">
+        <button data-hmode="week">Week</button>
+        <button class="is-on" data-hmode="month">Month</button>
+        <button data-hmode="year">Year</button>
+      </div>
+      <div class="statstrip inline" id="hoursStats"></div>
+      <div id="hoursList" class="list"></div>
+      <p class="hint" id="hoursNote"></p>
+    </div>
+  </section>
+
   <!-- ══════════════ CREW ══════════════ -->
   <section class="view" id="view-crew">
     <div class="scroll">
@@ -175,7 +189,7 @@
       <div class="card about">
         <p><b>Roster Atlas</b> keeps your roster in this device's IndexedDB. It never contacts a server with your data — there is no account, no sync, no analytics.</p>
         <p>Online map tiles are <b>off</b> by default; the world outline is bundled with the app so the map works in airplane mode. Turning tiles on requests images from CARTO/OpenStreetMap — that reveals which areas you pan over, not your roster.</p>
-        <p>Times are shown exactly as printed on the roster (local station time), so no duration maths are implied across time zones. Distances are great-circle.</p>
+        <p>Roster times are UTC (Zulu), shown exactly as printed, so block and duty totals are plain arithmetic. Local station times are derived from the airport's time zone. Distances are great-circle.</p>
         <p class="muted" id="swStatus">Service worker: checking…</p>
       </div>
     </div>
@@ -191,6 +205,9 @@
   </button>
   <button data-view="flights" role="tab">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 13l20-7-7 20-3-8-8-3z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg><span>Flights</span>
+  </button>
+  <button data-view="hours" role="tab">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 7v5.2l3.4 2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Hours</span>
   </button>
   <button data-view="crew" role="tab">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M3 20a6 6 0 0112 0M16 5.2a3.2 3.2 0 010 5.6M18 20a6 6 0 00-2.2-4.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><span>Crew</span>

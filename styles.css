@@ -173,13 +173,14 @@ em{font-style:normal;font-weight:var(--w-bold)}
   position:fixed;left:0;right:0;bottom:0;z-index:70;
   height:calc(var(--tabbar-h) + var(--safe-b));
   padding-bottom:var(--safe-b);
-  display:grid;grid-template-columns:repeat(5,1fr);
+  display:grid;grid-template-columns:repeat(6,1fr);
   background:var(--canvas);
   border-top:1px solid var(--border-subtle);
 }
-.tabbar button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--text-tertiary);transition:color .15s}
-.tabbar svg{width:22px;height:22px}
-.tabbar span{font-size:11px;line-height:14px;font-weight:var(--w-bold)}
+.tabbar button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--text-tertiary);transition:color .15s;min-width:0}
+.tabbar svg{width:21px;height:21px;flex:0 0 auto}
+.tabbar span{font-size:10px;line-height:13px;font-weight:var(--w-bold);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:340px){.tabbar span{font-size:9px}}
 .tabbar button.is-active{color:var(--green-dark)}
 
 /* ── map ─────────────────────────────────────────────────────────── */
@@ -293,6 +294,17 @@ input[type=date]{font-variant-numeric:tabular-nums}
 .suggest small{color:var(--text-tertiary);font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
 
 .hint{font-size:14px;line-height:20px;color:var(--text-tertiary);margin-bottom:16px}
+.hint b{color:var(--text-primary);font-weight:var(--w-bold)}
+
+/* duty-code toggles */
+.codechips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}
+.codechip{
+  padding:6px 14px;border-radius:var(--r-full);
+  font-size:13px;line-height:18px;font-weight:var(--w-bold);
+  background:var(--green-surface);border:1px solid var(--green);color:var(--green-darkest);
+}
+.codechip.is-off{background:var(--canvas);border-color:var(--border);color:var(--text-disabled);text-decoration:line-through}
+.codechip:active{transform:scale(.96)}
 .section-h{font-size:20px;line-height:32px;font-weight:var(--w-bold);color:var(--text-primary);margin:28px 0 12px}
 
 /* ── buttons ─────────────────────────────────────────────────────── */
@@ -337,6 +349,7 @@ input[type=date]{font-variant-numeric:tabular-nums}
 .tag.pax{background:var(--navy-surface);color:var(--navy-accent)}
 .tag.you{background:var(--green-surface);color:var(--green-darkest)}
 .tag.duty{background:var(--champagne);color:var(--text-secondary)}
+.tag.closed{background:var(--error-surface);color:var(--error)}
 
 .daygroup{margin-top:20px}
 .daygroup:first-child{margin-top:0}

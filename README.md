@@ -122,10 +122,20 @@ If you'd rather not use a PDF, the importer also accepts CSV/JSON with columns
 
 ## Notes on accuracy
 
-* Times are shown **exactly as printed** on the roster (local station time). The
-  app deliberately does no cross-timezone duration maths, so it never implies a
-  block time it cannot know.
+* Roster times are **UTC (Zulu)** — the roster's own day notes say so
+  (`1350z-2110z`). They are shown exactly as printed, and block/duty totals are
+  therefore plain arithmetic. Local station times shown in the leg detail are
+  derived from the airport's IANA time zone.
+  *(Verified empirically: treating the times as local station times instead puts
+  the implied block speed of 104 legs outside 350–950 km/h, KEF→AMS at
+  2038 km/h. Read as UTC, only one leg falls outside that band.)*
 * Distances are great-circle between airport coordinates.
+* The airport table includes **retired IATA codes** (TXL, THF, SXF …) recovered
+  from OurAirports' keywords on closed fields, so rosters flown while an airport
+  was open still map. A code that is live today always resolves to its current
+  holder — that is what stops Tempelhof from claiming `BER`. Closed airports are
+  labelled in the UI. The one case this cannot resolve is a code retired *and
+  later reassigned*: it resolves to the current holder.
 * Airports not in `data/airports.json` are still stored, but cannot be mapped —
   the import log lists them.
 
