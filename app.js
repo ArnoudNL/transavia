@@ -326,6 +326,25 @@ const CODES = {
   ZIL: ['Illness Cabin', 'l'],
   ZW: ['Pregnancy Leave Cabin', 'l'],
 };
+/* Codes confirmed by the crew directly, plus members of a family the
+   published list already establishes (S02 "Standby 02:00 lt" fixes the Sxx
+   pattern; A06/A14 and WV1 fix theirs). Kept separate from the imported table
+   so the provenance stays visible. SB* is deliberately NOT generalised: SBA is
+   "Standby Amsterdam" and counts, while SBC is a call-out and does not. */
+const CODES_EXTRA = {
+  SBC: ['Standby call-out — not flight or duty time', 'l'],
+  Z06: ['End of weekend 06:00 lt', 'o'],
+  Z14: ['End of weekend 14:00 lt', 'o'],
+  Z22: ['End of weekend 22:00 lt', 'o'],
+  A22: ['Weekend 8 hrs 2200-0600 lt', 'o'],
+  WV3: ['Weekend Vacation 2200-0600 lt', 'o'],
+  S04: ['Standby 04:00 lt', 'w'], S06: ['Standby 06:00 lt', 'w'],
+  S09: ['Standby 09:00 lt', 'w'], S10: ['Standby 10:00 lt', 'w'],
+  S11: ['Standby 11:00 lt', 'w'], S13: ['Standby 13:00 lt', 'w'],
+  S14: ['Standby 14:00 lt', 'w'], S15: ['Standby 15:00 lt', 'w'],
+};
+Object.assign(CODES, CODES_EXTRA);
+
 const codeMeaning = c => (CODES[c] ? CODES[c][0] : null);
 const codeKind    = c => (CODES[c] ? CODES[c][1] : null);
 
@@ -1111,7 +1130,9 @@ function isWorkItem(x) {
 function dutyDays(legs, duties) {
   const byDate = new Map();
   const add = x => {
-    if (!isWorkItem(x)) return;
+    /* Everything on the date is kept, not only the parts that count as duty:
+       a hotel or a weekend block is not duty time itself, but it separates the
+       duty either side of it, and that is what makes a duty day readable. */
     if (!byDate.has(x.date)) byDate.set(x.date, []);
     byDate.get(x.date).push(x);
   };
@@ -1119,28 +1140,54 @@ function dutyDays(legs, duties) {
   (duties || []).forEach(add);
 
   const out = [];
-  for (const [date, items] of byDate) {
+  for (const [date, all] of byDate) {
+    all.sort((a, b) => (itemBounds(a).start ?? 0) - (itemBounds(b).start ?? 0));
+    const items = all.filter(isWorkItem);
+    if (!items.length) continue;                      // a day off is not a duty day
+
     let blockMin = 0, sectors = 0, blockKnown = false;
-    let start = null, end = null;
     for (const x of items) {
-      if (x.flightNo) {
-        sectors++;
-        const b = legBlock(x);
-        if (b != null) { blockMin += b; blockKnown = true; }
-      }
-      const bd = itemBounds(x);
-      if (bd.start != null && (start == null || bd.start < start)) start = bd.start;
-      if (bd.end   != null && (end   == null || bd.end   > end))   end   = bd.end;
+      if (!x.flightNo) continue;
+      sectors++;
+      const b = legBlock(x);
+      if (b != null) { blockMin += b; blockKnown = true; }
     }
-    const dutyMin = (start != null && end != null && end >= start && end - start <= MAXDUR)
-      ? Math.round((end - start) / 60000) : null;
-    /* Legs and ground duties arrive in separate passes — put the day back in
-       chronological order so drilling into it reads like the roster page. */
-    items.sort((a, b) => (itemBounds(a).start ?? 0) - (itemBounds(b).start ?? 0));
+
+    /* Duty is the sum of its periods, not first check-in to last check-out.
+       Anything on the roster that is explicitly not duty — hotel, a standby
+       call-out, the tail of a weekend — ends the period it interrupts, so a
+       day with a hotel in the middle reads as two duties rather than one
+       impossible one. */
+    const periods = [];
+    let cur = null;
+    for (const x of all) {
+      const b = itemBounds(x);
+      if (b.start == null) continue;
+      if (isWorkItem(x)) {
+        if (!cur) cur = { start: b.start, end: b.end ?? b.start };
+        else cur.end = Math.max(cur.end, b.end ?? b.start);
+      } else if (cur && b.start >= cur.end) {
+        periods.push(cur); cur = null;                 // a break in the middle
+      }
+    }
+    if (cur) periods.push(cur);
+
+    /* Two different reasons a day can end up without a duty figure, and they
+       need telling apart: a period longer than the sanity cap is suspect,
+       whereas a period with a single timestamp is simply unmeasurable. */
+    const overlong   = periods.some(pr => pr.end - pr.start > MAXDUR);
+    const measurable = periods.filter(pr => pr.end > pr.start);
+    const dutyMin = overlong || !measurable.length ? null
+      : Math.round(measurable.reduce((n, pr) => n + (pr.end - pr.start), 0) / 60000);
+    const dutyIssue = overlong ? 'overlong' : (measurable.length ? null : 'unmeasured');
+
     out.push({
-      date, sectors, start, end, dutyMin,
+      date, sectors, periods, dutyIssue,
+      start: periods.length ? periods[0].start : null,
+      end:   periods.length ? periods[periods.length - 1].end : null,
+      dutyMin,
       blockMin: blockKnown ? blockMin : null,
-      legs: items.filter(x => x.flightNo), items,
+      legs: items.filter(x => x.flightNo), items: all,
     });
   }
   return out.sort((a, b) => b.date.localeCompare(a.date));
@@ -1758,7 +1805,15 @@ function renderHours() {
      they are named here so their absence from the duty total is visible. */
   const spanUtc = ts => ts == null ? '—'
     : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(ts);
-  const overlong = days.filter(d => d.dutyMin == null && d.start != null && d.end != null);
+  const overlong   = days.filter(d => d.dutyIssue === 'overlong');
+  const unmeasured = days.filter(d => d.dutyIssue === 'unmeasured');
+  const spanOf = d => (d.periods || []).map(pr => `${spanUtc(pr.start)} → ${spanUtc(pr.end)}`).join(', ') || '—';
+  const issueList = (list, why) => `<div class="untimed">${list.slice(0, 20).map(d =>
+    `<div class="untimed-row">
+       <span class="untimed-when">${esc(fmtShort(d.date))}</span>
+       <span class="untimed-what">${esc(d.items.map(x => x.flightNo || x.code).join(' + '))}</span>
+       <span class="untimed-why">${esc(why(d))}</span>
+     </div>`).join('')}</div>` + (list.length > 20 ? `<br>…and ${fmtInt(list.length - 20)} more.` : '');
   const avgDuty = tot.days ? Math.round(tot.duty / tot.days) : null;
 
   $('#hoursStats').innerHTML = statTiles([
@@ -1807,7 +1862,7 @@ function renderHours() {
 
   $('#hoursNote').innerHTML =
     'Roster times are UTC (Zulu), so block time is simply off blocks → on blocks, with legs landing after midnight carried into the next day. ' +
-    'A duty day runs from the first check-in to the last check-out of that roster date. ' +
+    'Duty is the sum of the day\'s duty periods. Anything explicitly not duty — a hotel, a standby call-out, the tail of a weekend — ends the period it interrupts, so a day with a hotel in the middle counts as two duties rather than one long one. ' +
     'Ground duties add to duty time but not block time.' +
     '<br><br><b>Which ground codes count as duty?</b> Tap to switch one off if it is really leave or rest — the totals above update immediately.' +
     `<div class="codechips">${chips}</div>` +
@@ -1820,13 +1875,10 @@ function renderHours() {
            <span class="untimed-why">${esc(why)}</span>
          </button>`).join('')}</div>` +
       (untimed.length > 40 ? `<br>…and ${fmtInt(untimed.length - 40)} more.` : '') : '') +
-    (overlong.length ? `<br><br><b>${fmtInt(overlong.length)} day${overlong.length === 1 ? '' : 's'} run past ${Math.round(MAXDUR / 3600000)} hours</b> from first check-in to last check-out — almost certainly two duties in one roster day, so no duty figure is counted for ${overlong.length === 1 ? 'it' : 'them'}. Block time is still included:` +
-      `<div class="untimed">${overlong.slice(0, 20).map(d =>
-        `<div class="untimed-row">
-           <span class="untimed-when">${esc(fmtShort(d.date))}</span>
-           <span class="untimed-what">${esc(d.items.map(x => x.flightNo || x.code).join(' + '))}</span>
-           <span class="untimed-why">${esc(spanUtc(d.start))} → ${esc(spanUtc(d.end))}</span>
-         </div>`).join('')}</div>` : '');
+    (overlong.length ? `<br><br><b>${fmtInt(overlong.length)} day${overlong.length === 1 ? '' : 's'} have a duty period past ${Math.round(MAXDUR / 3600000)} hours</b>, so no duty figure is counted for ${overlong.length === 1 ? 'it' : 'them'}. Block time is still included:` +
+      issueList(overlong, spanOf) : '') +
+    (unmeasured.length ? `<br><br><b>${fmtInt(unmeasured.length)} day${unmeasured.length === 1 ? '' : 's'} have no measurable duty period</b> — the roster gives a single timestamp, with nothing to measure to:` +
+      issueList(unmeasured, d => (d.periods || []).map(pr => spanUtc(pr.start)).join(', ') || '—') : '');
 }
 
 function showPeriodSheet(key) {
@@ -1848,7 +1900,7 @@ function showPeriodSheet(key) {
       <div class="daygroup">
         <div class="dayhead">
           <span>${esc(fmtDay(d.date))}</span>
-          <small><span class="times">${esc(timeAt(d.start))}–${esc(timeAt(d.end))}</span> UTC · duty ${fmtHM(d.dutyMin)} · block ${fmtHM(d.blockMin)}</small>
+          <small><span class="times">${(d.periods || []).map(pr => esc(timeAt(pr.start)) + '–' + esc(timeAt(pr.end))).join(' + ') || '—'}</span> UTC · duty ${fmtHM(d.dutyMin)}${(d.periods || []).length > 1 ? ` in ${d.periods.length} periods` : ''} · block ${fmtHM(d.blockMin)}</small>
         </div>
         <div class="list">${
           d.items.length
@@ -2283,7 +2335,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '11';   // keep in step with VERSION in sw.js
+const SW_TAG = '12';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {
