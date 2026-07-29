@@ -269,8 +269,8 @@ function isChrome(s) {
       || /^Crew Roster Portal/.test(s)
       || /^\d+\.\d+\.\d+(\.\d+)?$/.test(s)
       || /^\d{2}[A-Z]{3}\d{2}\s+\d{2}:\d{2}$/.test(s)
-      || /^[A-Z]{3}-[A-Z0-9]{2,4}\s+\S+$/.test(s)   // base/fleet banner: "EIN-PU 0", "AMS-CA2 UTC"
-      || /^C\/I\s+ATD/.test(s)
+      || /^[A-Z]{3}-[A-Z0-9]{2,4}(\s+\S+)?$/.test(s)  // "EIN-PU 0", "AMS-CA2 UTC", "AMS-PU"
+      || /^C\/I\b/.test(s)                            // "C/I ATD ATA LE" and 2013/14's "C/I LE"
       || /^Date\s+\S+\s+Activity/.test(s)
       || /^(ATA|Rq\s*AC|RqAC)/.test(s);
 }
@@ -491,6 +491,13 @@ function parseRoster(lines) {
       res.flights.push(f);
       openLeg = to ? null : f;
     } else {
+      /* A real duty always names a place or a time. A row with neither is page
+         furniture this parser doesn't recognise — a header line, a footer, a
+         version string. Skipping it matters beyond tidiness: a leg that lands
+         after midnight is held open across the page break waiting for its
+         arrival row, and treating stray chrome as a duty would close it and
+         split the leg in two. */
+      if (!row.pairs.length && !row.ci && !row.co) continue;
       const from = row.pairs[0] ? row.pairs[0].ap : null;
       res.duties.push({
         date, code: row.activity, from,
@@ -1546,7 +1553,12 @@ function renderFlights() {
   else if (S.flightKind === 'both')  list = list.concat(filteredDuties());
   if (q) {
     list = list.filter(x => {
-      const hay = [x.flightNo, x.code, x.from, x.to, x.date, x.ac].filter(Boolean).join(' ').toLowerCase();
+      /* Search the words shown on screen, not just the raw codes: someone
+         looking for a taxi types "taxi", not "TAX". Airport names count too. */
+      const hay = [
+        x.flightNo, x.code, dutyLabel(x.code), x.from, x.to, x.date, x.ac,
+        x.from && apName(x.from), x.to && apName(x.to),
+      ].filter(Boolean).join(' ').toLowerCase();
       if (hay.includes(q)) return true;
       return (x.crew || []).some(k => personName(k).toLowerCase().includes(q));
     });
@@ -1877,6 +1889,15 @@ function wireEvents() {
   $('#tabbar').addEventListener('click', ev => {
     const b = ev.target.closest('button[data-view]'); if (b) switchView(b.dataset.view);
   });
+
+  /* Tapping the title bar jumps the current list back to the top, the way the
+     status bar does elsewhere on iOS. The filter button keeps its own job. */
+  $('#topbar').addEventListener('click', ev => {
+    if (ev.target.closest('#openFilters')) return;
+    const sc = $(`#view-${S.view} .scroll`);
+    if (sc && sc.scrollTop > 0) sc.scrollTo({ top: 0, behavior: 'smooth' });
+    else if (S.view === 'map') drawMap(true);        // nothing to scroll: re-frame instead
+  });
   document.addEventListener('click', ev => {
     const g = ev.target.closest('[data-goto]'); if (g) switchView(g.dataset.goto);
   });
@@ -2105,7 +2126,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '8';   // keep in step with VERSION in sw.js
+const SW_TAG = '9';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {

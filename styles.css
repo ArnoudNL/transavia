@@ -142,6 +142,7 @@ em{font-style:normal;font-weight:var(--w-bold)}
   background:var(--canvas);
   border-bottom:1px solid var(--border-subtle);
 }
+.topbar{cursor:pointer}                 /* tap to scroll the current list to the top */
 .topbar-title{flex:1;min-width:0}
 .topbar h1{font-size:20px;line-height:28px;font-weight:var(--w-bold);color:var(--text-primary)}
 .filter-summary{font-size:12px;line-height:18px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
