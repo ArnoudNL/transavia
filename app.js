@@ -204,7 +204,9 @@ const MAXDUR = 20 * 3600000;
 
 /** Block time (off blocks -> on blocks) in minutes, or null when unknowable. */
 function legBlock(f) {
-  const a = rosterInstant(f.date, f.dep);
+  /* depDate differs from date only when the roster printed the STD on the
+     following day's row, because the aircraft went off blocks after midnight. */
+  const a = rosterInstant(f.depDate || f.date, f.dep);
   const b = rosterInstant(f.arrDate || f.date, f.arr);
   if (a == null || b == null) return null;
   let d = b - a;
@@ -470,10 +472,22 @@ function parseRoster(lines) {
     const date = iso(cursor);
 
     if (isFlightNo(row.activity)) {
-      /* A leg printed across midnight arrives on the next roster row. */
-      if (row.pairs.length === 1 && openLeg && openLeg.flightNo === row.activity && !openLeg.to) {
+      /* A leg printed across midnight is continued on the next roster row.
+         Which columns carry over depends on where midnight falls:
+           STA over  — C/I, Orig and STD on the first row, Dest and STA after
+           STD over  — only C/I and Orig on the first row, because the aircraft
+                       does not go off blocks until the following day
+         In the second shape the continuation row leads with the STD, which the
+         positional reader books as a check-in because no airport has been seen
+         yet. A continuation row cannot have a check-in of its own — the crew
+         reported on the opening row — so that time is the departure, and it is
+         dated to the row it was printed on. */
+      if (row.pairs.length === 1 && openLeg && flightKey(openLeg.flightNo) === flightKey(row.activity) && !openLeg.to) {
+        if (openLeg.dep == null && row.ci) { openLeg.dep = row.ci; openLeg.depDate = date; }
         openLeg.to = row.pairs[0].ap; openLeg.arr = row.pairs[0].t;
         openLeg.arrDate = date; openLeg.co = row.co || openLeg.co;
+        if (openLeg.arr && openLeg.dep && openLeg.arr < openLeg.dep)
+          openLeg.arrDate = iso(addDays(parseIso(openLeg.depDate || openLeg.date), 1));
         openLeg = null; continue;
       }
       const from = row.pairs[0] ? row.pairs[0].ap : null;
@@ -945,7 +959,9 @@ function itemBounds(x) {
   const isLeg = !!x.flightNo;
   const startT = x.ci || (isLeg ? x.dep : x.start);
   const endT   = x.co || (isLeg ? x.arr : x.end);
-  const start = rosterInstant(x.date, startT);
+  /* Check-in is always on the roster date; an off-blocks time may not be. */
+  const startDate = x.ci ? x.date : (isLeg ? (x.depDate || x.date) : x.date);
+  const start = rosterInstant(startDate, startT);
   let end = rosterInstant(isLeg ? (x.arrDate || x.date) : x.date, endT);
   if (start != null && end != null && end < start) end += 86400000;   // over midnight
   if (start != null && end != null && end - start > MAXDUR) end = null;
@@ -1612,6 +1628,14 @@ function renderHours() {
     return { f, why };
   });
   const unknownBlock = untimed.length;
+
+  /* Days whose first check-in to last check-out runs past the sanity cap are
+     nearly always two duties in one roster day — a standby, then a flight that
+     lands the next morning. Rather than guess at a rule for splitting them,
+     they are named here so their absence from the duty total is visible. */
+  const spanUtc = ts => ts == null ? '—'
+    : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(ts);
+  const overlong = days.filter(d => d.dutyMin == null && d.start != null && d.end != null);
   const avgDuty = tot.days ? Math.round(tot.duty / tot.days) : null;
 
   $('#hoursStats').innerHTML = statTiles([
@@ -1670,7 +1694,14 @@ function renderHours() {
            <span class="untimed-what"><span class="iata">${esc(f.flightNo)}</span> ${esc(f.from)}<span class="arrow">→</span>${esc(f.to || '??')}</span>
            <span class="untimed-why">${esc(why)}</span>
          </button>`).join('')}</div>` +
-      (untimed.length > 40 ? `<br>…and ${fmtInt(untimed.length - 40)} more.` : '') : '');
+      (untimed.length > 40 ? `<br>…and ${fmtInt(untimed.length - 40)} more.` : '') : '') +
+    (overlong.length ? `<br><br><b>${fmtInt(overlong.length)} day${overlong.length === 1 ? '' : 's'} run past ${Math.round(MAXDUR / 3600000)} hours</b> from first check-in to last check-out — almost certainly two duties in one roster day, so no duty figure is counted for ${overlong.length === 1 ? 'it' : 'them'}. Block time is still included:` +
+      `<div class="untimed">${overlong.slice(0, 20).map(d =>
+        `<div class="untimed-row">
+           <span class="untimed-when">${esc(fmtShort(d.date))}</span>
+           <span class="untimed-what">${esc(d.items.map(x => x.flightNo || x.code).join(' + '))}</span>
+           <span class="untimed-why">${esc(spanUtc(d.start))} → ${esc(spanUtc(d.end))}</span>
+         </div>`).join('')}</div>` : '');
 }
 
 function showPeriodSheet(key) {
@@ -2126,7 +2157,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '9';   // keep in step with VERSION in sw.js
+const SW_TAG = '10';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {
