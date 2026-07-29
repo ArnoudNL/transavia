@@ -216,6 +216,119 @@ function legBlock(f) {
 const fmtHM = min => (min == null ? '—' : `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`);
 const fmtHours = min => (min == null ? '—' : (min / 60).toFixed(min >= 6000 ? 0 : 1) + ' h');
 
+/* ── roster code dictionary ──────────────────────────────────────────────── */
+/* Transavia's own code list, imported from the crew documentation. Each entry
+   is [meaning, kind] where kind is:
+     w  active work        — counts as duty
+     o  day-off            — weekend, part-time and vacation blocks
+     l  leave              — compensation, illness, no-duty
+     r  rest               — hotel
+     f  duty designator    — DD-column qualifier, never an activity
+     m  legal marker       — appears in the LE column against a flight
+   Classification replaces guessing at whether a code occupies real time; the
+   old heuristic is still the fallback for codes not listed here. */
+const CODES = {
+  '5A1': ['Parttime cabin 50% 08 hrs 0600-1400 lt', 'o'],
+  '5A2': ['Parttime cabin 50% 08 hrs 1400-2200 lt', 'o'],
+  '5A3': ['Parttime cabin 50% 08 hrs 2200-0600 lt', 'o'],
+  '5V1': ['Parttime cabin 50% 24 hrs 0600-0600 lt', 'o'],
+  '6A1': ['Parttime cabin 60% 08 hrs 0600-1400 lt', 'o'],
+  '7A1': ['Parttime cabin 70% 08 hrs 0600-1400 lt', 'o'],
+  '8A1': ['Parttime cabin 80% 08 hrs 0600-1400 lt', 'o'],
+  '9A1': ['Parttime cabin 90% 08 hrs 0600-1400 lt', 'o'],
+  A06: ['Weekend 8 hrs 0600-1400 lt', 'o'],
+  A14: ['Weekend 8 hrs 1400-2200 lt', 'o'],
+  ADA: ['Ground training Actual Opening Doors Airbus', 'w'],
+  AIT: ['Ground training Advanced instr. tr.', 'w'],
+  BC: ['Bewilliging cash payment', 'm'],
+  BG: ['Bewilliging ground', 'm'],
+  BI: ['Availability Limited', 'l'],
+  BU: ['Office duty', 'w'],
+  CBG: ['Compensation CBG-CT 100% bewilliging grond', 'l'],
+  CE: ['Cabin exception 1 hour', 'm'],
+  CG8: ['Compensation Time connected to weekend > 8 hrs', 'l'],
+  CI: ['Computer base instruction', 'w'],
+  CIR: ['Compensation Recovery Rest', 'l'],
+  CLE: ['Compensation Time for Late - Early', 'l'],
+  CRM: ['Ground training Cabin CRM', 'w'],
+  CT8: ['Compensation time connected to weekend < 8 hrs', 'l'],
+  D: ['Deadhead, positioning (other carriers)', 'f'],
+  DL5: ['Parttime cabin 50%', 'o'],
+  DO: ['Rest in freetime', 'm'],
+  E1: ['FTL extensie 1 hour', 'm'],
+  F: ['115 hours checkin', 'f'],
+  FS1: ['Ground training REC+FA', 'w'],
+  H: ['Highrank duty', 'f'],
+  HTL: ['Hotel', 'r'],
+  I: ['Instructor', 'f'],
+  IAI: ['Instructor Airbus Cabin', 'w'],
+  K: ['15 minutes extra debrief, trainingflight', 'f'],
+  L: ['Lowrank duty', 'f'],
+  MMC: ['Ground training management cur. flex', 'w'],
+  NA: ['Non Active flexible', 'l'],
+  NF: ['Not Fit', 'l'],
+  NI: ['No duty', 'l'],
+  NS: ['No show', 'l'],
+  OA1: ['Ground training Airbus Conversion dag 1', 'w'],
+  OD: ['Office Duty', 'w'],
+  OS5: ['Parental leave 50%', 'o'],
+  OSC: ['Parental leave cabin', 'o'],
+  P: ['Positioning (HV carrier)', 'f'],
+  REA: ['Ground training Recurrent Airbus', 'w'],
+  RO: ['Rotation rest cabin', 'm'],
+  RR: ['reduced rest', 'm'],
+  S02: ['Standby 02:00 lt', 'w'],
+  SA2: ['Standby subbase AMS', 'w'],
+  SBA: ['Standby Amsterdam', 'w'],
+  SEC: ['Security training', 'w'],
+  SST: ['Safe and Strategy Training', 'w'],
+  TAB: ['Ground transport Taxi Foreign Country', 'w'],
+  TRS: ['Ground training Transition CA1-CA2', 'w'],
+  TTT: ['Train the trainer', 'w'],
+  U: ['On top off (hours)', 'f'],
+  U0: ['Legal rest FTL', 'm'],
+  U1: ['Exception additional activity', 'm'],
+  UC: ['Ancillary Function Unit Coach', 'w'],
+  UCE: ['Ancillary Function Unit Coach', 'w'],
+  UCR: ['Ancillary Function Unit Coach', 'w'],
+  UK: ['Exception killer', 'm'],
+  UNC: ['Office day Union UNC', 'w'],
+  UO: ['Observation On Top Off', 'f'],
+  UR: ['Reduce rest cabin with 2 hours', 'm'],
+  US: ['Overruled planned limits', 'm'],
+  UT: ['All exceptions regarding taxi and positioning', 'm'],
+  UV: ['Flight 1 hour after standby', 'm'],
+  V: ['On top off (no hours)', 'f'],
+  V06: ['Weekend 24 hrs 0600-0600lt', 'o'],
+  V14: ['Weekend 24 hrs 1400-1400 lt', 'o'],
+  V22: ['Weekend 24 hrs 2200-2200 lt', 'o'],
+  VBB: ['Ground training Preparation Training', 'w'],
+  VBD: ['Ground training Preparation Training', 'w'],
+  VC: ['CBM on own request', 'm'],
+  VE1: ['Vacation Unit 1 0600-1400 lt', 'o'],
+  VE2: ['Vacation Unit 2 1400-2200 lt', 'o'],
+  VE3: ['Vacation Unit 3 2200-0600 lt', 'o'],
+  VNC: ['Office day Union VNC', 'w'],
+  VNF: ['Office day Union Flexible', 'w'],
+  VS1: ['Vacation start 0600', 'o'],
+  VS2: ['Vacation start 1400', 'o'],
+  VS3: ['Vacation start 2200', 'o'],
+  W00: ['Weekend 24 hrs 0000-0000 lt', 'o'],
+  W32: ['Office Weekend 2200-2200 lt', 'o'],
+  WAO: ['Wet Arbeids Ongeschiktheid (unfit to work by law)', 'l'],
+  WF: ['Weekend Flexible', 'o'],
+  WV1: ['Weekend Vacation 0600-1400 lt', 'o'],
+  Y02: ['Airbus Standby 02:00 lt', 'w'],
+  Y03: ['Airbus Standby 03:00 lt', 'w'],
+  YA2: ['Airbus Standby subbase AMS', 'w'],
+  ZB: ['Last Day of Illness', 'l'],
+  ZI: ['Illness Cockpit', 'l'],
+  ZIL: ['Illness Cabin', 'l'],
+  ZW: ['Pregnancy Leave Cabin', 'l'],
+};
+const codeMeaning = c => (CODES[c] ? CODES[c][0] : null);
+const codeKind    = c => (CODES[c] ? CODES[c][1] : null);
+
 /* ── 4. roster parser ───────────────────────────────────────────────────── */
 /* Tuned against Crew Roster Portal "Individual Roster" exports.
    Rows look like:
@@ -801,18 +914,13 @@ async function importFiles(fileList) {
 
 /* ── 7. in-memory state ─────────────────────────────────────────────────── */
 
-/* Ground codes not counted as duty out of the box. Hotel is rest; everything
-   else is judged by whether it occupies real time (see isWorkItem), and the
-   user can override any of it from the Hours tab. */
-const REST_CODES_DEFAULT = ['HTL'];
-
 const S = {
   flights: [], duties: [], people: new Map(), sources: [], aliases: {},
   filter: { from: null, to: null, crew: [], passive: true },
   overlap: { crew: [], from: null, to: null },
   view: 'map', selectedRoute: null, tiles: false, labels: true,
   routeSort: 'count', flightLimit: 200, hoursMode: 'month', flightKind: 'flights',
-  excluded: new Set(REST_CODES_DEFAULT),   // ground codes the user says aren't duty
+  codeOverrides: {},            // code -> true/false, only where the user disagrees
 };
 
 const alias = k => S.aliases[k] || k;
@@ -878,7 +986,19 @@ async function loadData() {
 
   const saved = await metaGet('ui', null);
   if (saved) { S.tiles = !!saved.tiles; S.labels = saved.labels !== false; }
-  S.excluded = new Set(await metaGet('excludedCodes', REST_CODES_DEFAULT));
+  /* Older builds stored a flat list of excluded codes. Carry those choices
+     forward as explicit overrides — but only where they still say something
+     the published classification doesn't already, so the list doesn't fossilise
+     guesses that the code dictionary now answers properly. */
+  const savedOverrides = await metaGet('codeOverrides', null);
+  if (savedOverrides) {
+    S.codeOverrides = savedOverrides;
+  } else {
+    S.codeOverrides = {};
+    for (const c of (await metaGet('excludedCodes', [])))
+      if (!['o', 'l', 'r'].includes(codeKind(c))) S.codeOverrides[c] = false;
+    await metaSet('codeOverrides', S.codeOverrides);
+  }
 }
 const saveUi = () => metaSet('ui', { tiles: S.tiles, labels: S.labels });
 
@@ -976,7 +1096,13 @@ function itemBounds(x) {
    is rest, not duty, and is the one code named explicitly. */
 function isWorkItem(x) {
   if (x.flightNo) return true;
-  if (S.excluded.has(x.code)) return false;
+  const ov = S.codeOverrides[x.code];
+  if (ov !== undefined) return ov;                 // the user has ruled on this code
+  const k = codeKind(x.code);
+  if (k === 'o' || k === 'l' || k === 'r') return false;   // day-off, leave, hotel
+  if (k === 'w') return true;                              // active work
+  /* Not in the published list: fall back to whether it occupies real time,
+     which is what day-off markers fail. */
   const b = itemBounds(x);
   return b.start != null && b.end != null && b.end > b.start;
 }
@@ -1252,13 +1378,10 @@ function flightRowHTML(f, opts = {}) {
   </button>`;
 }
 
-/* Only codes whose meaning has been confirmed are spelled out; anything else
-   keeps its raw code rather than being given an invented name. */
-const DUTY_LABEL = {
-  PIC: 'Taxi', HTR: 'Taxi', TAX: 'Taxi',
-  HTL: 'Hotel',
-};
-const dutyLabel = code => DUTY_LABEL[code] || null;
+/* Codes not in the published list keep their raw code rather than being given
+   an invented name. These few are named from how they appear in the roster. */
+const DUTY_LABEL = { PIC: 'Taxi', HTR: 'Taxi', TAX: 'Taxi' };
+const dutyLabel = code => DUTY_LABEL[code] || codeMeaning(code) || null;
 
 function dutyRowHTML(d) {
   const t = [d.start, d.end].filter(Boolean).join('–');
@@ -1659,24 +1782,26 @@ function renderHours() {
     </button>`).join('') : '<div class="nothing">No duty days match the current filter.</div>';
 
   /* Ground codes are classified by whether they occupy real time, not by what
-     they mean — the app has no way to know an airline's vocabulary. Anything
-     with a time span is counted, and you can switch a code off if it is really
-     leave or rest. */
-  const seen = new Map();      // code -> minutes it currently contributes
+     they mean. Codes in the published dictionary are classified from it;
+     anything else falls back to whether it occupies real time. Either way you
+     can overrule a code here. */
+  const seen = new Map();      // code -> what it currently contributes
   for (const d of filteredDuties()) {
     const b = itemBounds(d);
     const mins = (b.start != null && b.end != null && b.end > b.start) ? Math.round((b.end - b.start) / 60000) : 0;
-    const e = seen.get(d.code) || { n: 0, mins: 0 };
+    const e = seen.get(d.code) || { n: 0, mins: 0, sample: d };
     e.n++; e.mins += mins;
     seen.set(d.code, e);
   }
   const chips = [...seen.entries()]
-    .filter(([, e]) => e.mins > 0)                       // zero-span markers can never count
+    .filter(([code, e]) => e.mins > 0 || codeKind(code))  // has time, or is a known code
     .sort((a, b) => b[1].mins - a[1].mins)
     .map(([code, e]) => {
-      const on = !S.excluded.has(code);
+      const on = isWorkItem({ code, ...e.sample });
+      const why = codeMeaning(code) || 'not in the published code list';
+      const ov = S.codeOverrides[code] !== undefined ? ' — you set this' : '';
       return `<button class="codechip${on ? '' : ' is-off'}" data-code="${esc(code)}"
-        title="${on ? 'Counted' : 'Not counted'} — ${fmtHM(e.mins)} over ${e.n}">${esc(code)}</button>`;
+        title="${esc(why)}${ov} · ${fmtHM(e.mins)} over ${e.n}">${esc(code)}</button>`;
     }).join('');
   const zeroSpan = [...seen.entries()].filter(([, e]) => e.mins === 0).map(([c]) => c).sort();
 
@@ -1986,10 +2111,11 @@ function wireEvents() {
   $('#hoursNote').addEventListener('click', async ev => {
     const b = ev.target.closest('[data-code]'); if (!b) return;
     const code = b.dataset.code;
-    S.excluded.has(code) ? S.excluded.delete(code) : S.excluded.add(code);
-    await metaSet('excludedCodes', [...S.excluded]);
+    const now = isWorkItem({ code, date: '2000-01-01' });
+    S.codeOverrides[code] = !now;
+    await metaSet('codeOverrides', S.codeOverrides);
     renderHours();
-    toast(S.excluded.has(code) ? `${code} no longer counts as duty` : `${code} counts as duty`);
+    toast(S.codeOverrides[code] ? `${code} counts as duty` : `${code} no longer counts as duty`);
   });
   $('#hoursMode').addEventListener('click', ev => {
     const b = ev.target.closest('[data-hmode]'); if (!b) return;
@@ -2157,7 +2283,7 @@ async function exportBackup() {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '10';   // keep in step with VERSION in sw.js
+const SW_TAG = '11';   // keep in step with VERSION in sw.js
 
 async function boot() {
   try {
