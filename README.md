@@ -74,7 +74,7 @@ trip through it loses nothing.
 
 ## Version and licence
 
-Released under the [MIT licence](LICENSE). Changes are recorded in
+Released under the [MIT licence](LICENSE). That covers this app's own code; the vendored components keep their own licences, listed under [Third-party components](#third-party-components), and Söhne is not redistributed here. Changes are recorded in
 [CHANGELOG.md](CHANGELOG.md), which lists the service-worker cache version
 against each release so you can tell what an installed copy is running.
 
