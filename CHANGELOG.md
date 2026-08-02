@@ -13,6 +13,21 @@ The service worker cache version (`VERSION` in `sw.js`) is bumped with every
 release so installed copies pick the release up; it is listed against each
 entry below.
 
+## [0.14.1-beta] — 2026-08-02 · sw v16
+
+### Fixed
+- **Exports arrived with `.txt` stuck on the end.** Handed a `text/*` blob,
+  Safari decides it knows the type better than the `download` attribute does
+  and appends `.txt`, so a CSV saved as `.csv.txt`. The download now carries an
+  opaque type, leaving nothing to infer from and the filename honoured as
+  written. The share sheet still gets the real media type, so a receiving app
+  knows what it is holding. The bytes are identical either way.
+- The Data tab named a version twice — the release and the service-worker cache
+  number. Only the release is shown now.
+
+### Removed
+- The superseded JSON-only roster backup, replaced by the four-format export.
+
 ## [0.14.0-beta] — 2026-08-02 · sw v15
 
 ### Changed

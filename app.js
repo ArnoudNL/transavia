@@ -2474,23 +2474,6 @@ async function wipe(what) {
   toast({ roster: 'Roster deleted', notes: 'Notes deleted', all: 'Everything deleted' }[what]);
 }
 
-async function exportBackup() {
-  const payload = {
-    app: 'transavia-roster', version: 1, exported: new Date().toISOString(),
-    flights: S.flights, duties: S.duties,
-    people: [...S.people.values()].map(p => ({ ...p, tags: [...(p.tags || [])] })),
-    sources: S.sources,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 1)], { type: 'application/json' });
-  const name = `transavia-roster-backup-${iso(new Date())}.json`;
-  const file = new File([blob], name, { type: 'application/json' });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
-  }
-  const url = URL.createObjectURL(blob);
-  const a = el('a'); a.href = url; a.download = name; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
 
 /* ── 16. notes ──────────────────────────────────────────────────────────── */
 /* Notes live in this device's IndexedDB, which is the source of truth. Where
@@ -2598,14 +2581,22 @@ async function writeOut(name, text, mime) {
       return;
     } catch (e) { console.warn('[notes] folder write failed, offering a download', e); }
   }
-  const blob = new Blob([text], { type: mime });
-  const file = new File([blob], name, { type: mime });
+  /* The share sheet gets the real media type, so the receiving app knows what
+     it is holding. */
+  const file = new File([text], name, { type: mime });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: name }); return; }
     catch (e) { if (e.name === 'AbortError') return; }
   }
+  /* The download link does NOT. Given a text/* blob, Safari decides it knows
+     better and appends .txt to the name — so a CSV arrives as .csv.txt. An
+     opaque type leaves it nothing to infer from, and the download attribute is
+     honoured verbatim. The bytes are identical either way. */
+  const blob = new Blob([text], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
-  const a = el('a'); a.href = url; a.download = name; a.click();
+  const a = el('a');
+  a.href = url; a.download = name; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   toast(`Exported ${name}`);
 }
@@ -3026,11 +3017,11 @@ async function importAny(fileList) {
 
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-/* Single source for the release. Keep VERSION in sw.js in step: the service
-   worker cannot import, and its cache name is what makes installed copies pick
-   a release up. CHANGELOG.md lists both against each entry. */
-const APP_VERSION = '0.14.0-beta';
-const SW_TAG = '15';
+/* Single source for the release, and the only version shown to anyone. Keep
+   VERSION in sw.js in step: the service worker cannot import, and its cache
+   name is what makes installed copies pick a release up. CHANGELOG.md lists
+   both against each entry. */
+const APP_VERSION = '0.14.1-beta';
 
 async function boot() {
   try {
@@ -3054,7 +3045,7 @@ async function boot() {
   try {
     initMap();
     wireEvents();
-    $('#appVersion').textContent = `Version ${APP_VERSION} · MIT licence · beta — check totals against the printed roster.`;
+    $('#appVersion').textContent = `Version ${APP_VERSION} · MIT licence · check totals against the printed roster.`;
     $('#fPassive').checked = S.filter.passive;
     refreshAll();
     if (S.flights.length) drawMap(true); else switchView('data');
@@ -3067,7 +3058,7 @@ async function boot() {
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js')
-      .then(r => { $('#swStatus').textContent = `Service worker: active — the app opens offline (v${SW_TAG}).`; return r; })
+      .then(r => { $('#swStatus').textContent = 'Service worker: active — the app opens offline.'; return r; })
       .catch(e => { $('#swStatus').textContent = 'Service worker: not registered — serve the app over http(s), not file://'; console.warn(e); });
   } else {
     $('#swStatus').textContent = 'Service worker: unsupported in this browser.';
