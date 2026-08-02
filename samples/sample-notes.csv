@@ -1,0 +1,12 @@
+id,created,updated,date,time,ident,kind,from,to,text
+seed01,2026-07-29T09:00:00Z,2026-07-29T09:00:00Z,2022-04-07,03:57,HV6409,flight,AMS,NAP,"Report 02:55. Aircraft PH-HZE, cabin ready 10 min early."
+seed02,2026-07-29T09:07:00Z,2026-07-29T09:07:00Z,2022-04-07,03:57,HV6409,flight,AMS,NAP,"Slot delay 25 min out of AMS, ATC flow into Naples."
+seed03,2026-07-29T09:14:00Z,2026-07-29T09:14:00Z,2022-04-07,03:57,HV6409,flight,AMS,NAP,Pax in 12C unwell on descent; met by handling on arrival.
+seed04,2026-07-29T09:21:00Z,2026-07-29T09:21:00Z,2022-04-07,07:55,HV6410,flight,NAP,AMS,"Quick turn in NAP, 45 min. Catering short by two crew meals."
+seed05,2026-07-29T09:28:00Z,2026-07-29T09:28:00Z,2022-04-28,09:18,HV5105,flight,EIN,VLC,First sector with the new purser checklist.
+seed06,2026-07-29T09:35:00Z,2026-07-29T09:35:00Z,2022-04-28,09:18,HV5105,flight,EIN,VLC,Overhead bin latch row 8 sticking — written up in the CDL.
+seed07,2026-07-29T09:42:00Z,2026-07-29T09:42:00Z,2022-04-28,12:18,HV5106,flight,VLC,EIN,"Smooth return, on blocks 6 min early."
+seed08,2026-07-29T09:49:00Z,2026-07-29T09:49:00Z,2022-04-29,10:47,HV6789,flight,EIN,BCN,"Full flight, 189 pax. Boarding via two doors."
+seed09,2026-07-29T09:56:00Z,2026-07-29T09:56:00Z,2022-05-03,02:20,CBM,duty,EIN,AMS,Crew bus left EIN on time at 02:20.
+seed10,2026-07-29T10:03:00Z,2026-07-29T10:03:00Z,2022-05-03,02:20,CBM,duty,EIN,AMS,"Traffic clear, arrived AMS 03:40 as planned."
+seed11,2026-07-29T10:10:00Z,2026-07-29T10:10:00Z,2019-01-01,06:00,HV9999,flight,AMS,XXX,Note from a roster year that was never imported.

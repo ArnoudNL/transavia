@@ -201,3 +201,11 @@ Söhne is *not* included; see the typography note above.
 up on the *next* launch. To force every client to refresh immediately, bump
 `VERSION` in `sw.js` (and `SW_TAG` in `app.js`, which only feeds the status line
 on the Data tab).
+
+### Trying the import
+
+`samples/sample-notes.csv` holds eleven notes written against real activities
+from a 2022 roster, three of them sharing one flight and two sharing a ground
+duty, plus one row pointing at a flight that was never imported. Import it from
+the Notes tab with that roster loaded and it reports **11 imported, 10 linked** —
+the eleventh is kept and marked unlinked.
