@@ -90,7 +90,7 @@ function gcSegments(a, b, n = 48) {
 /* Do NOT rename DB_NAME. It is the IndexedDB database key: changing it points
    the app at a fresh, empty database and orphans every roster already imported
    on someone's phone. The app's display name is independent of it. */
-const DB_NAME = 'roster-atlas', DB_VERSION = 1;
+const DB_NAME = 'roster-atlas', DB_VERSION = 2;
 let db = null;
 
 function openDB() {
@@ -110,6 +110,11 @@ function openDB() {
       if (!d.objectStoreNames.contains('people'))  d.createObjectStore('people',  { keyPath: 'key' });
       if (!d.objectStoreNames.contains('sources')) d.createObjectStore('sources', { keyPath: 'id' });
       if (!d.objectStoreNames.contains('meta'))    d.createObjectStore('meta',    { keyPath: 'k' });
+      if (!d.objectStoreNames.contains('notes')) {
+        const n = d.createObjectStore('notes', { keyPath: 'id' });
+        n.createIndex('activityId', 'ref.activityId');
+        n.createIndex('created', 'created');
+      }
     };
     req.onsuccess = () => res(req.result);
     req.onerror   = () => rej(req.error);
@@ -128,7 +133,7 @@ async function putAll(store, items) {
   await idbDone(t);
 }
 async function clearAll() {
-  const names = ['flights', 'duties', 'people', 'sources', 'meta'];
+  const names = ['flights', 'duties', 'people', 'sources', 'meta', 'notes'];
   const t = tx(names, 'readwrite');
   names.forEach(n => t.objectStore(n).clear());
   await idbDone(t);
@@ -934,7 +939,7 @@ async function importFiles(fileList) {
 /* ── 7. in-memory state ─────────────────────────────────────────────────── */
 
 const S = {
-  flights: [], duties: [], people: new Map(), sources: [], aliases: {},
+  flights: [], duties: [], people: new Map(), sources: [], aliases: {}, notes: [],
   filter: { from: null, to: null, crew: [], passive: true },
   overlap: { crew: [], from: null, to: null },
   view: 'map', selectedRoute: null, tiles: false, labels: true,
@@ -1002,6 +1007,8 @@ async function loadData() {
     await putAll('flights', healed);
     console.info(`[transavia-roster] backfilled route/distance on ${healed.length} leg(s)`);
   }
+
+  await loadNotes();
 
   const saved = await metaGet('ui', null);
   if (saved) { S.tiles = !!saved.tiles; S.labels = saved.labels !== false; }
@@ -1394,6 +1401,17 @@ function selectRoute(key, frame = false) {
 
 /* ── 10. shared row renderers ───────────────────────────────────────────── */
 
+/* The inline marker every activity carries: tap to add a note, or to reopen
+   the ones already there. Kept narrow so it never crowds the row. */
+function noteMarkHTML(activityId) {
+  const n = notesFor(activityId).length;
+  return `<button class="note-mark${n ? ' has-notes' : ''}" data-note-for="${esc(activityId)}"
+    aria-label="${n ? `${n} note${n === 1 ? '' : 's'} — add another` : 'Add a note'}" title="${n ? `${n} note${n === 1 ? '' : 's'}` : 'Add a note'}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.2h11L19 9v10a.8.8 0 01-.8.8H4a.8.8 0 01-.8-.8V6a.8.8 0 01.8-.8z" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linejoin="round"/><path d="M15 5.4V9h3.6" stroke="currentColor" stroke-width="1.9" fill="none"/></svg>
+    ${n ? `<span class="note-count">${n}</span>` : '<span class="note-plus">+</span>'}
+  </button>`;
+}
+
 function flightRowHTML(f, opts = {}) {
   const times = [f.dep, f.arr].filter(Boolean).join('–') || (f.ci ? 'C/I ' + f.ci : '');
   const tags = [];
@@ -1414,7 +1432,7 @@ function flightRowHTML(f, opts = {}) {
     ? `${fmtHM(block)}<small>block</small>`
     : `${f.km ? fmtInt(f.km) : '—'}<small>km</small>`;
 
-  return `<button class="row-item" data-flight="${esc(f.id)}">
+  return `<div class="row-item" role="button" tabindex="0" data-flight="${esc(f.id)}">
     <div class="row-main">
       <div class="row-title"><span class="iata">${esc(f.from)}</span><span class="arrow">→</span>
         <span class="iata">${esc(f.to || '??')}</span>${tags.join('')}</div>
@@ -1422,7 +1440,8 @@ function flightRowHTML(f, opts = {}) {
       <div class="row-sub">${esc(f.flightNo)} · <span class="times">${esc(times)}</span>${f.ac ? ' · ' + esc(f.ac) : ''}${crewN ? ` · ${crewN} crew` : ''}</div>
     </div>
     <div class="row-num">${metric}</div>
-  </button>`;
+    ${noteMarkHTML(f.id)}
+  </div>`;
 }
 
 /* Codes not in the published list keep their raw code rather than being given
@@ -1436,12 +1455,14 @@ function dutyRowHTML(d) {
   const named = c => { const n = apName(c); return n && n !== c ? n : null; };
   const where = [d.from, d.to].filter(Boolean);
   const cities = where.some(named) ? where.map(c => apName(c)).join(' → ') : '';
-  return `<div class="row-item">
+  return `<div class="row-item" role="button" tabindex="0" data-duty="${esc(d.id)}">
     <div class="row-main">
       <div class="row-title">${esc(label || d.code)}${label ? ` <span class="tag">${esc(d.code)}</span>` : ''} <span class="tag duty">duty</span></div>
       ${cities ? `<div class="row-sub cities">${esc(cities)}</div>` : ''}
       <div class="row-sub">${esc(where.join(' → ') || '—')}${t ? ' · ' : ''}<span class="times">${esc(t)}</span></div>
-    </div></div>`;
+    </div>
+    ${noteMarkHTML(d.id)}
+  </div>`;
 }
 
 /** Group flight/duty records into day sections, newest first. */
@@ -2012,7 +2033,7 @@ function updateFilterSummary() {
 function refreshAll() {
   updateFilterSummary();
   drawMap(false);
-  renderRoutes(); renderFlights(); renderHours(); renderCrew(); renderOverlap(); renderData();
+  renderRoutes(); renderFlights(); renderHours(); renderCrew(); renderOverlap(); renderNotes(); renderData();
   buildQuickRanges();
 }
 
@@ -2088,7 +2109,7 @@ function switchView(name) {
   S.view = name;
   $$('.view').forEach(v => v.classList.toggle('is-active', v.id === 'view-' + name));
   $$('#tabbar button').forEach(b => b.classList.toggle('is-active', b.dataset.view === name));
-  $('#viewTitle').textContent = { map:'Map', routes:'Routes', flights:'Flights', hours:'Hours', crew:'Crew', data:'Data' }[name];
+  $('#viewTitle').textContent = { map:'Map', routes:'Routes', flights:'Flights', hours:'Hours', crew:'Crew', notes:'Notes', data:'Data' }[name];
   if (name === 'map' && map) setTimeout(() => map.invalidateSize(), 60);
   if (name !== 'map') hideSheet();
 }
@@ -2201,6 +2222,29 @@ function wireEvents() {
                            : setRange('overlap', `${b.dataset.yr}-01-01`, `${b.dataset.yr}-12-31`);
   });
 
+  /* notes */
+  $('#noteSearch').addEventListener('input', renderNotes);
+  $('#noteImportInput').addEventListener('change', async ev => {
+    const files = [...ev.target.files]; ev.target.value = '';
+    if (files.length) await importNotesFiles(files);
+  });
+  $('#noteSave').addEventListener('click', commitNote);
+  $('#noteDelete').addEventListener('click', async () => {
+    const id = $('#noteDialog').dataset.note;
+    if (!id) return;
+    if (!confirm('Delete this note?')) return;
+    await deleteNote(id);
+    closeNoteEditor(); renderNotes(); renderFlights(); refreshHoursIfVisible();
+    toast('Note deleted');
+  });
+  $('#noteDialog').addEventListener('click', ev => {
+    if (ev.target.closest('[data-note-close]')) closeNoteEditor();
+  });
+  /* Ctrl/Cmd+Enter saves, so a note can be finished without reaching for the button */
+  $('#noteText').addEventListener('keydown', ev => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') { ev.preventDefault(); commitNote(); }
+  });
+
   /* data */
   $('#fileInput').addEventListener('change', async ev => {
     const files = [...ev.target.files];
@@ -2218,6 +2262,26 @@ function wireEvents() {
 
   /* delegated: rows and sheet actions */
   document.addEventListener('click', async ev => {
+    const mark = ev.target.closest('[data-note-for]');
+    if (mark) {
+      ev.stopPropagation();                       // don't also open the row's sheet
+      const id = mark.dataset.noteFor;
+      const mine = notesFor(id);
+      if (mine.length) showNotesSheet(id); else openNoteEditor(id);
+      return;
+    }
+    const noteRow = ev.target.closest('[data-note]');
+    if (noteRow && !ev.target.closest('#noteDialog')) {
+      openNoteEditor(null, noteRow.dataset.note); return;
+    }
+    const expN = ev.target.closest('[data-export-notes]');
+    if (expN) {
+      const fmt = expN.dataset.exportNotes;
+      const stamp = iso(new Date());
+      await writeOut(`roster-notes-${stamp}.${fmt}`, exportNotes(fmt),
+        { html:'text/html', txt:'text/plain', json:'application/json', csv:'text/csv' }[fmt]);
+      return;
+    }
     const route = ev.target.closest('[data-route]');
     if (route) {
       const fromList = S.view !== 'map';
@@ -2236,6 +2300,9 @@ function wireEvents() {
     const fl = ev.target.closest('[data-flight]');
     if (fl) { showFlightSheet(fl.dataset.flight); return; }
 
+    const du = ev.target.closest('[data-duty]');
+    if (du) { showNotesSheet(du.dataset.duty); return; }
+
     const pe = ev.target.closest('[data-period]');
     if (pe) { showPeriodSheet(pe.dataset.period); return; }
 
@@ -2253,6 +2320,14 @@ function wireEvents() {
       renderOverlap(); toast(`${personName(key)} added to overlap`);
     } else if (act.dataset.act === 'rename-person') {
       await renamePerson(key);
+    } else if (act.dataset.act === 'pick-folder') {
+      await appointFolder();
+    } else if (act.dataset.act === 'forget-folder') {
+      await forgetFolder();
+    } else if (act.dataset.act === 'note-add') {
+      openNoteEditor(act.dataset.key);
+    } else if (act.dataset.act === 'note-edit') {
+      openNoteEditor(null, act.dataset.key);
     }
   });
 
@@ -2267,7 +2342,13 @@ function wireEvents() {
     onDismiss: () => { $('#filterSheet').hidden = true; },
     handle: '.modal-head', scroller: '.modal-body',
   });
-  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { hideSheet(); $('#filterSheet').hidden = true; } });
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { hideSheet(); $('#filterSheet').hidden = true; closeNoteEditor(); }
+    /* rows carry role="button", so they must answer the keyboard like one */
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('.row-item[role="button"]')) {
+      ev.preventDefault(); ev.target.click();
+    }
+  });
 }
 
 /** Rename a person; renaming onto an existing name merges the two records. */
@@ -2333,9 +2414,420 @@ async function exportBackup() {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+/* ── 16. notes ──────────────────────────────────────────────────────────── */
+/* Notes live in this device's IndexedDB, which is the source of truth. Where
+   the browser supports the File System Access API a folder can additionally be
+   appointed, and the whole set is mirrored to notes.json there after every
+   change. Neither path involves the network: nothing in this module fetches,
+   posts, or opens a socket, and the service worker only ever caches the app's
+   own files. iOS Safari has no directory picker, so there the folder step is
+   hidden and export/import through the share sheet does the same job. */
+
+const canPickFolder = () => typeof window.showDirectoryPicker === 'function';
+
+const noteId = () =>
+  `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+/** The identity a note is matched back to on import: date + time + flight or code. */
+function activityRef(x) {
+  const isLeg = !!x.flightNo;
+  return {
+    kind: isLeg ? 'flight' : 'duty',
+    activityId: x.id,
+    date: x.date,
+    time: (isLeg ? (x.dep || x.ci) : (x.start || x.ci)) || '',
+    ident: isLeg ? x.flightNo : x.code,
+    from: x.from || '', to: x.to || '',
+  };
+}
+/** Same shape for both halves of a match, so linking is a string compare. */
+const refKey = r =>
+  `${r.date}|${(r.time || '').slice(0, 5)}|${flightKey(r.ident || '')}`;
+
+function activityById(id) {
+  return S.flights.find(f => f.id === id) || S.duties.find(d => d.id === id) || null;
+}
+const notesFor = id => S.notes.filter(n => n.ref && n.ref.activityId === id);
+
+async function loadNotes() {
+  S.notes = (await getAll('notes')).sort((a, b) => b.created - a.created);
+}
+
+async function saveNote(note) {
+  await putAll('notes', [note]);
+  await loadNotes();
+  await mirrorNotesToFolder();
+}
+async function deleteNote(id) {
+  const t = tx(['notes'], 'readwrite');
+  t.objectStore('notes').delete(id);
+  await idbDone(t);
+  await loadNotes();
+  await mirrorNotesToFolder();
+}
+
+/* ── appointed folder ───────────────────────────────────────────────────── */
+
+async function folderHandle() {
+  return (await metaGet('notesDir', null)) || null;
+}
+async function folderPermission(handle, request) {
+  if (!handle || !handle.queryPermission) return 'granted';
+  const opts = { mode: 'readwrite' };
+  let p = await handle.queryPermission(opts);
+  if (p !== 'granted' && request) p = await handle.requestPermission(opts);
+  return p;
+}
+async function appointFolder() {
+  if (!canPickFolder()) { toast('This browser has no folder picker'); return; }
+  try {
+    const dir = await window.showDirectoryPicker({ id: 'transavia-roster-notes', mode: 'readwrite' });
+    await metaSet('notesDir', dir);
+    await mirrorNotesToFolder();
+    renderNotes();
+    toast(`Notes folder set to “${dir.name}”`);
+  } catch (e) {
+    if (e && e.name !== 'AbortError') toast('Could not open that folder');
+  }
+}
+async function forgetFolder() {
+  await metaSet('notesDir', null);
+  renderNotes();
+  toast('Notes stay on this device only');
+}
+/** Write the full set to the appointed folder. Silent when none is appointed. */
+async function mirrorNotesToFolder() {
+  const dir = await folderHandle();
+  if (!dir) return false;
+  try {
+    if (await folderPermission(dir, false) !== 'granted') return false;
+    const fh = await dir.getFileHandle('notes.json', { create: true });
+    const w = await fh.createWritable();
+    await w.write(exportNotes('json'));
+    await w.close();
+    return true;
+  } catch (e) { console.warn('[notes] could not write to the folder', e); return false; }
+}
+/** Save an export into the appointed folder, or fall back to a download. */
+async function writeOut(name, text, mime) {
+  const dir = await folderHandle();
+  if (dir && await folderPermission(dir, true) === 'granted') {
+    try {
+      const fh = await dir.getFileHandle(name, { create: true });
+      const w = await fh.createWritable();
+      await w.write(text); await w.close();
+      toast(`Saved ${name} to “${dir.name}”`);
+      return;
+    } catch (e) { console.warn('[notes] folder write failed, offering a download', e); }
+  }
+  const blob = new Blob([text], { type: mime });
+  const file = new File([blob], name, { type: mime });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = el('a'); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast(`Exported ${name}`);
+}
+
+/* ── export ─────────────────────────────────────────────────────────────── */
+
+const NOTE_COLS = ['id', 'created', 'updated', 'date', 'time', 'ident', 'kind', 'from', 'to', 'text'];
+const noteRow = n => ({
+  id: n.id, created: new Date(n.created).toISOString(),
+  updated: new Date(n.updated || n.created).toISOString(),
+  date: n.ref.date, time: n.ref.time, ident: n.ref.ident, kind: n.ref.kind,
+  from: n.ref.from, to: n.ref.to, text: n.text,
+});
+const csvCell = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+
+function exportNotes(fmt, list = S.notes) {
+  const rows = list.map(noteRow);
+  if (fmt === 'json') {
+    return JSON.stringify({ app: 'transavia-roster', kind: 'notes', version: APP_VERSION,
+      exported: new Date().toISOString(), notes: rows }, null, 2);
+  }
+  if (fmt === 'csv') {
+    return [NOTE_COLS.join(','), ...rows.map(r => NOTE_COLS.map(c => csvCell(r[c])).join(','))].join('\r\n');
+  }
+  if (fmt === 'txt') {
+    return rows.map(r =>
+      `# ${r.date} ${r.time} ${r.ident} (${r.kind}${r.from ? ` ${r.from}->${r.to}` : ''})\n${r.text}\n`).join('\n');
+  }
+  /* HTML doubles as the printable copy and as an importable file: the same
+     fields are repeated in data- attributes so a round trip loses nothing. */
+  return `<!DOCTYPE html>
+<meta charset="utf-8"><title>Roster notes</title>
+<style>
+ body{font:15px/1.5 -apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#222;margin:32px;max-width:760px}
+ h1{font-size:22px;margin:0 0 4px} .meta{color:#6a6a6a;font-size:13px;margin-bottom:24px}
+ article{border:1px solid rgba(32,32,32,.1);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+ h2{font-size:15px;margin:0 0 6px} .when{color:#6a6a6a;font-weight:400;font-size:13px}
+ p{margin:0;white-space:pre-wrap}
+ @media print{body{margin:0}article{break-inside:avoid}}
+</style>
+<h1>Roster notes</h1>
+<div class="meta">${rows.length} note${rows.length === 1 ? '' : 's'} · exported ${esc(new Date().toLocaleString('en-GB'))}</div>
+${rows.map(r => `<article data-id="${esc(r.id)}" data-date="${esc(r.date)}" data-time="${esc(r.time)}"
+  data-ident="${esc(r.ident)}" data-kind="${esc(r.kind)}" data-from="${esc(r.from)}" data-to="${esc(r.to)}"
+  data-created="${esc(r.created)}">
+  <h2>${esc(r.ident)} <span class="when">${esc(r.date)} ${esc(r.time)}${r.from ? ` · ${esc(r.from)}→${esc(r.to)}` : ''}</span></h2>
+  <p>${esc(r.text)}</p>
+</article>`).join('\n')}
+`;
+}
+
+/* ── import ─────────────────────────────────────────────────────────────── */
+
+function parseCsvRows(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else if (c !== '\r') cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(v => v !== ''));
+}
+
+/** @returns [{text, ref}] — whatever the file could yield, unmatched as yet. */
+function parseNotesFile(text, filename) {
+  const name = (filename || '').toLowerCase();
+  const out = [];
+  const push = (o) => {
+    const t = (o.text || '').trim();
+    if (!t) return;
+    out.push({ text: t, created: Date.parse(o.created) || Date.now(),
+      ref: { kind: o.kind || 'flight', date: (o.date || '').slice(0, 10), time: (o.time || '').slice(0, 5),
+             ident: (o.ident || '').toUpperCase(), from: o.from || '', to: o.to || '', activityId: null } });
+  };
+
+  if (name.endsWith('.json') || /^\s*[[{]/.test(text)) {
+    const j = JSON.parse(text);
+    (Array.isArray(j) ? j : j.notes || []).forEach(push);
+    return out;
+  }
+  if (name.endsWith('.csv')) {
+    const rows = parseCsvRows(text);
+    if (!rows.length) return out;
+    const head = rows[0].map(h => h.trim().toLowerCase());
+    for (const r of rows.slice(1)) {
+      const o = {}; head.forEach((h, i) => o[h] = r[i]);
+      push(o);
+    }
+    return out;
+  }
+  if (name.endsWith('.html') || /<article|<!doctype html/i.test(text)) {
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    for (const a of doc.querySelectorAll('article')) {
+      push({ ...a.dataset, text: (a.querySelector('p') || {}).textContent || '' });
+    }
+    return out;
+  }
+  /* TXT: "# DATE TIME IDENT (kind FROM->TO)" then the note until the next header */
+  let cur = null;
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^#\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})?\s*(\S+)?\s*(?:\((\w+)(?:\s+([A-Z]{3})->([A-Z]{3}))?\))?/.exec(line);
+    if (m) {
+      if (cur) push(cur);
+      cur = { date: m[1], time: m[2] || '', ident: m[3] || '', kind: m[4] || 'flight', from: m[5] || '', to: m[6] || '', text: '' };
+    } else if (cur) cur.text += (cur.text ? '\n' : '') + line;
+  }
+  if (cur) push(cur);
+  return out;
+}
+
+/** Match parsed entries onto the activities already in the database. */
+function linkNotes(parsed) {
+  const index = new Map();
+  for (const x of [...S.flights, ...S.duties]) {
+    const r = activityRef(x);
+    const k = refKey(r);
+    if (!index.has(k)) index.set(k, x);
+  }
+  /* A second index without the time, so a note still finds its activity when
+     the export rounded or omitted it. */
+  const loose = new Map();
+  for (const x of [...S.flights, ...S.duties]) {
+    const r = activityRef(x);
+    const k = `${r.date}|${flightKey(r.ident || '')}`;
+    if (!loose.has(k)) loose.set(k, x);
+  }
+  let linked = 0;
+  for (const n of parsed) {
+    const hit = index.get(refKey(n.ref)) || loose.get(`${n.ref.date}|${flightKey(n.ref.ident || '')}`);
+    if (hit) { n.ref = { ...activityRef(hit) }; linked++; }
+  }
+  return linked;
+}
+
+async function importNotesFiles(fileList) {
+  const log = $('#noteImportLog');
+  log.hidden = false; log.innerHTML = '';
+  let added = 0, linked = 0, skipped = 0;
+  const existing = new Set(S.notes.map(n => `${n.ref.date}|${n.ref.ident}|${n.text}`));
+  const batch = [];
+
+  for (const file of fileList) {
+    try {
+      const text = await readText(file);
+      const parsed = parseNotesFile(text, file.name);
+      const gotLinked = linkNotes(parsed);
+      let newHere = 0;
+      for (const n of parsed) {
+        const dedupe = `${n.ref.date}|${n.ref.ident}|${n.text}`;
+        if (existing.has(dedupe)) { skipped++; continue; }
+        existing.add(dedupe);
+        batch.push({ id: noteId(), text: n.text, created: n.created, updated: n.created, ref: n.ref });
+        newHere++;
+      }
+      added += newHere; linked += gotLinked;
+      const p = el('div');
+      p.innerHTML = `<b>${esc(file.name)}</b><br><span class="ok">✓ ${fmtInt(newHere)} note${newHere === 1 ? '' : 's'}</span>` +
+        ` · ${fmtInt(gotLinked)} linked to an activity` +
+        (parsed.length - gotLinked ? ` · <span class="warn">${fmtInt(parsed.length - gotLinked)} kept unlinked</span>` : '');
+      log.appendChild(p);
+    } catch (err) {
+      const p = el('div');
+      p.innerHTML = `<b>${esc(file.name)}</b><br><span class="err">✗ ${esc(err.message || String(err))}</span>`;
+      log.appendChild(p);
+    }
+  }
+  if (batch.length) { await putAll('notes', batch); await loadNotes(); await mirrorNotesToFolder(); }
+  const sum = el('div');
+  sum.innerHTML = `<b>Done.</b> ${fmtInt(added)} imported, ${fmtInt(linked)} linked to an activity` +
+    (skipped ? `, ${fmtInt(skipped)} already present` : '') + '.';
+  log.appendChild(sum);
+  renderNotes(); refreshAll();
+  toast(`${fmtInt(added)} note${added === 1 ? '' : 's'} imported · ${fmtInt(linked)} linked`);
+}
+
+/* ── composing ──────────────────────────────────────────────────────────── */
+
+/** The notes already on an activity, with a way to add another. */
+function showNotesSheet(activityId) {
+  const act = activityById(activityId);
+  const mine = notesFor(activityId);
+  const r = act ? activityRef(act) : null;
+  const head = r ? `${r.ident}${r.from ? ` ${r.from} → ${r.to}` : ''}` : 'Notes';
+  openSheet(`
+    <div class="sheet-title">${esc(head)}</div>
+    <p class="sheet-sub">${r ? esc(fmtDay(r.date)) + (r.time ? ' · ' + esc(r.time) + ' UTC' : '') : ''} · ${fmtInt(mine.length)} note${mine.length === 1 ? '' : 's'}</p>
+    <div class="row-btns"><button class="btn-primary" data-act="note-add" data-key="${esc(activityId)}">Add another note</button></div>
+    <h2 class="section-h">Notes</h2>
+    <div class="list">${mine.map(n => `
+      <div class="row-item note-row" role="button" tabindex="0" data-act="note-edit" data-key="${esc(n.id)}">
+        <div class="row-main">
+          <div class="row-sub">noted ${esc(fmtShort(new Date(n.created).toISOString().slice(0, 10)))}${n.updated && n.updated !== n.created ? ' · edited' : ''}</div>
+          <p class="note-text">${esc(n.text)}</p>
+        </div>
+      </div>`).join('')}</div>`);
+}
+
+function openNoteEditor(activityId, existingId) {
+  const act = activityById(activityId);
+  const note = existingId ? S.notes.find(n => n.id === existingId) : null;
+  if (!act && !note) return;
+  const ref = act ? activityRef(act) : note.ref;
+  const title = ref.ident + (ref.from ? ` ${ref.from}→${ref.to}` : '');
+  $('#noteDialogTitle').textContent = note ? 'Edit note' : 'New note';
+  $('#noteDialogSub').textContent = `${fmtDay(ref.date)}${ref.time ? ' · ' + ref.time + ' UTC' : ''} · ${title}`;
+  $('#noteText').value = note ? note.text : '';
+  $('#noteDialog').dataset.activity = activityId || (note && note.ref.activityId) || '';
+  $('#noteDialog').dataset.note = existingId || '';
+  $('#noteDelete').hidden = !note;
+  $('#noteDialog').hidden = false;
+  setTimeout(() => $('#noteText').focus(), 60);
+}
+const closeNoteEditor = () => { $('#noteDialog').hidden = true; };
+
+async function commitNote() {
+  const dlg = $('#noteDialog');
+  const text = $('#noteText').value.trim();
+  if (!text) { closeNoteEditor(); return; }
+  const existingId = dlg.dataset.note;
+  if (existingId) {
+    const n = S.notes.find(x => x.id === existingId);
+    if (n) await saveNote({ ...n, text, updated: Date.now() });
+  } else {
+    const act = activityById(dlg.dataset.activity);
+    if (!act) return;
+    await saveNote({ id: noteId(), text, created: Date.now(), updated: Date.now(), ref: activityRef(act) });
+  }
+  closeNoteEditor();
+  renderNotes(); renderFlights(); refreshHoursIfVisible();
+  toast('Note saved');
+}
+const refreshHoursIfVisible = () => { if (S.view === 'hours') renderHours(); };
+
+/* ── the Notes tab ──────────────────────────────────────────────────────── */
+
+function noteMatches(n, q) {
+  if (!q) return true;
+  const r = n.ref || {};
+  return [n.text, r.ident, r.date, r.time, r.from, r.to,
+          r.from && apName(r.from), r.to && apName(r.to),
+          r.ident && dutyLabel(r.ident), r.date && fmtDay(r.date)]
+    .filter(Boolean).join(' ').toLowerCase().includes(q);
+}
+
+function renderNotes() {
+  const q = ($('#noteSearch').value || '').trim().toLowerCase();
+  const list = S.notes.filter(n => noteMatches(n, q));
+
+  $('#noteStats').innerHTML = statTiles([
+    [fmtInt(S.notes.length), 'notes'],
+    [fmtInt(new Set(S.notes.map(n => n.ref.activityId).filter(Boolean)).size), 'activities'],
+    [fmtInt(S.notes.filter(n => !n.ref.activityId).length), 'unlinked'],
+  ]);
+
+  folderHandle().then(dir => {
+    const box = $('#noteFolder');
+    if (!canPickFolder()) {
+      box.innerHTML = `<p class="hint">This browser keeps notes in the app's own private storage on this device — there is no folder picker here. Nothing is uploaded either way; use Export to put a copy where you want it.</p>`;
+      return;
+    }
+    box.innerHTML = dir
+      ? `<div class="kv"><span>Notes folder</span><b>${esc(dir.name)}</b></div>
+         <p class="hint">Every change is written to <code>notes.json</code> in that folder.</p>
+         <div class="row-btns"><button class="btn-ghost" data-act="forget-folder">Use device storage only</button>
+         <button class="btn-ghost" data-act="pick-folder">Change folder</button></div>`
+      : `<p class="hint">Notes are held in this device's private storage. You can also appoint a folder, and every change will be mirrored to <code>notes.json</code> inside it.</p>
+         <div class="row-btns"><button class="btn-ghost" data-act="pick-folder">Appoint a folder…</button></div>`;
+  });
+
+  $('#noteList').innerHTML = list.length ? list.map(n => {
+    const r = n.ref || {};
+    const act = r.activityId ? activityById(r.activityId) : null;
+    const where = r.from ? `${esc(r.from)} <span class="arrow">→</span> ${esc(r.to)}` : esc(dutyLabel(r.ident) || '');
+    return `<div class="row-item note-row" data-note="${esc(n.id)}">
+      <div class="row-main">
+        <div class="row-title"><span class="iata">${esc(r.ident || '—')}</span> ${where}
+          ${act ? '' : '<span class="tag">unlinked</span>'}</div>
+        <div class="row-sub">${esc(fmtShort(r.date))}${r.time ? ' · ' + esc(r.time) + ' UTC' : ''} · noted ${esc(fmtShort(new Date(n.created).toISOString().slice(0, 10)))}</div>
+        <p class="note-text">${esc(n.text)}</p>
+      </div>
+    </div>`;
+  }).join('') : `<div class="nothing">${S.notes.length
+    ? 'No notes match that search.'
+    : 'No notes yet. Open any flight or ground duty and tap the note marker on the row.'}</div>`;
+}
+
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
-const SW_TAG = '12';   // keep in step with VERSION in sw.js
+/* Single source for the release. Keep VERSION in sw.js in step: the service
+   worker cannot import, and its cache name is what makes installed copies pick
+   a release up. CHANGELOG.md lists both against each entry. */
+const APP_VERSION = '0.13.0-beta';
+const SW_TAG = '13';
 
 async function boot() {
   try {
@@ -2349,6 +2841,7 @@ async function boot() {
   }
   initMap();
   wireEvents();
+  $('#appVersion').textContent = `Version ${APP_VERSION} · MIT licence · beta — check totals against the printed roster.`;
   $('#fPassive').checked = S.filter.passive;
   refreshAll();
   if (S.flights.length) drawMap(true); else switchView('data');

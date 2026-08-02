@@ -50,6 +50,37 @@ colour-vision deficiency rather than picked by eye:
   ramp step by ΔE 29–54. Selected airports also invert to a white fill with a
   thick navy ring, so selection never rests on hue alone.
 
+## Notes
+
+Notes can be attached to any flight or ground duty from the marker on its row,
+as many per activity as you like. Each carries the activity's date, time and
+flight number or duty code, which is also how an imported note finds its way
+back to the right activity.
+
+They are held in this device's IndexedDB. Where the browser supports the File
+System Access API — Chrome and Edge on desktop — a folder can be appointed as
+well, and the full set is mirrored to `notes.json` inside it after every
+change. **iOS Safari has no directory picker**, so on an iPhone the folder step
+is hidden; notes stay in the app's private storage and Export puts a copy
+wherever you want it.
+
+Either way nothing is uploaded. The notes module makes no network calls at all
+— verified by instrumenting `fetch`, `XMLHttpRequest`, `sendBeacon` and
+`WebSocket` while adding, listing, exporting, importing and deleting notes.
+
+Export and import both handle HTML, TXT, JSON and CSV. The HTML export doubles
+as the printable copy and repeats every field in `data-` attributes, so a round
+trip through it loses nothing.
+
+## Version and licence
+
+Released under the [MIT licence](LICENSE). Changes are recorded in
+[CHANGELOG.md](CHANGELOG.md), which lists the service-worker cache version
+against each release so you can tell what an installed copy is running.
+
+**This is beta software.** It reads rosters heuristically; check its totals
+against the printed roster before relying on them.
+
 ## Files
 
 | File | Purpose |
@@ -59,6 +90,7 @@ colour-vision deficiency rather than picked by eye:
 | `app.js` | Roster parser, IndexedDB layer, map, analytics |
 | `manifest.json` | PWA manifest (standalone, icons) |
 | `sw.js` | Service worker — precaches the shell, caches map tiles |
+| `LICENSE`, `CHANGELOG.md` | MIT licence and release history |
 | `vendor/` | Leaflet 1.9.4 and pdf.js 3.11 (legacy build), served locally |
 | `data/airports.json` | 9,753 IATA airports — coordinates, time zone, closed flag |
 | `data/world.geo.json` | Simplified world outline, so the map works with no network |

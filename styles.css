@@ -179,13 +179,14 @@ em{font-style:normal;font-weight:var(--w-bold)}
   position:fixed;left:0;right:0;bottom:0;z-index:70;
   height:calc(var(--tabbar-h) + var(--safe-b));
   padding-bottom:var(--safe-b);
-  display:grid;grid-template-columns:repeat(6,1fr);
+  display:grid;grid-template-columns:repeat(7,1fr);
   background:var(--canvas);
   border-top:1px solid var(--border-subtle);
 }
 .tabbar button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--text-tertiary);transition:color .15s;min-width:0}
 .tabbar svg{width:21px;height:21px;flex:0 0 auto}
 .tabbar span{font-size:10px;line-height:13px;font-weight:var(--w-bold);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:400px){.tabbar svg{width:19px;height:19px}.tabbar span{font-size:9px}}
 @media (max-width:340px){.tabbar span{font-size:9px}}
 .tabbar button.is-active{color:var(--green-dark)}
 
@@ -489,3 +490,40 @@ input[type=date]{font-variant-numeric:tabular-nums}
   .modal{align-items:center}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+
+/* ── notes ───────────────────────────────────────────────────────────────── */
+/* The row is the tap target for the activity; the marker sits inside it and
+   stops the click, so the two never fight over the same tap. */
+.row-item{position:relative}
+.note-mark{
+  flex:0 0 auto;display:inline-flex;align-items:center;gap:3px;
+  padding:6px 9px;border-radius:var(--r-full);
+  border:1px solid var(--border);background:var(--canvas);color:var(--text-tertiary);
+  align-self:flex-start
+}
+.note-mark svg{width:15px;height:15px}
+.note-mark .note-plus{font-size:13px;line-height:1;font-weight:var(--w-bold)}
+.note-mark .note-count{font-size:12px;line-height:1;font-weight:var(--w-bold)}
+.note-mark:active{background:var(--surface-3)}
+.note-mark.has-notes{border-color:var(--green);background:var(--green-surface);color:var(--green-dark)}
+
+.note-row{align-items:flex-start}
+.note-text{
+  margin-top:8px;font-size:14px;line-height:20px;color:var(--text-primary);
+  white-space:pre-wrap;overflow-wrap:anywhere
+}
+#noteText{
+  width:100%;min-height:150px;padding:14px 16px;border-radius:var(--r-3);
+  background:var(--canvas);border:1px solid var(--border);
+  color:var(--text-primary);font:inherit;resize:vertical
+}
+#noteText:focus{outline:2px solid var(--green);outline-offset:-2px;border-color:var(--green)}
+#noteImportInput{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#noteDialog .modal-head{align-items:flex-start;gap:12px}
+#noteDialog .sheet-sub{margin:2px 0 0}
+#noteDialog .modal-foot .btn-primary{flex:1}
+#noteFolder code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+  background:var(--surface-3);padding:1px 5px;border-radius:var(--r-1)
+}

@@ -159,6 +159,43 @@
     </div>
   </section>
 
+  <!-- ══════════════ NOTES ══════════════ -->
+  <section class="view" id="view-notes">
+    <div class="scroll">
+      <div class="toolbar">
+        <input type="search" id="noteSearch" placeholder="Search notes, flight, duty, date…" autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="statstrip inline" id="noteStats"></div>
+      <div id="noteList" class="list"></div>
+
+      <h2 class="section-h">Where notes are kept</h2>
+      <div class="card" id="noteFolder"></div>
+
+      <h2 class="section-h">Export</h2>
+      <div class="card">
+        <p class="hint">The file carries each note with its date, time and flight number or duty code, so it can be read back in later.</p>
+        <div class="row-btns">
+          <button class="btn-ghost" data-export-notes="html">HTML</button>
+          <button class="btn-ghost" data-export-notes="txt">TXT</button>
+          <button class="btn-ghost" data-export-notes="json">JSON</button>
+          <button class="btn-ghost" data-export-notes="csv">CSV</button>
+        </div>
+      </div>
+
+      <h2 class="section-h">Import</h2>
+      <div class="card">
+        <p class="hint">Notes are matched back to their activity on date, time and flight number or duty code. Anything that finds no match is kept and marked unlinked.</p>
+        <label class="filedrop" for="noteImportInput">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <strong>Choose note file(s)</strong>
+          <span>.html · .txt · .json · .csv</span>
+        </label>
+        <input type="file" id="noteImportInput" accept=".html,.txt,.json,.csv,text/html,text/plain,application/json,text/csv" multiple>
+        <div id="noteImportLog" class="importlog" hidden></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ══════════════ DATA ══════════════ -->
   <section class="view" id="view-data">
     <div class="scroll">
@@ -195,6 +232,7 @@
         <p>Online map tiles are <b>off</b> by default; the world outline is bundled with the app so the map works in airplane mode. Turning tiles on requests images from CARTO/OpenStreetMap — that reveals which areas you pan over, not your roster.</p>
         <p>Roster times are UTC (Zulu), shown exactly as printed, so block and duty totals are plain arithmetic. Local station times are derived from the airport's time zone. Distances are great-circle.</p>
         <p><b>Not an official Transavia app.</b> It is an independent personal tool, not affiliated with, endorsed by, or connected to Transavia. All trademarks belong to their owners.</p>
+        <p class="muted" id="appVersion"></p>
         <p class="muted" id="swStatus">Service worker: checking…</p>
       </div>
     </div>
@@ -216,6 +254,9 @@
   </button>
   <button data-view="crew" role="tab">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M3 20a6 6 0 0112 0M16 5.2a3.2 3.2 0 010 5.6M18 20a6 6 0 00-2.2-4.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><span>Crew</span>
+  </button>
+  <button data-view="notes" role="tab">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.8h9.5L19 8.3V20a1 1 0 01-1 1H5a1 1 0 01-1-1V4.8a1 1 0 011-1z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M14 4v5h5M8 13h7M8 16.5h4.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><span>Notes</span>
   </button>
   <button data-view="data" role="tab">
     <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" stroke="currentColor" stroke-width="1.8" fill="none"/></svg><span>Data</span>
@@ -266,6 +307,30 @@
 </div>
 
 <div class="pullhint" id="pullHint" hidden>Keep pulling to reload</div>
+
+<div class="modal" id="noteDialog" hidden>
+  <div class="modal-backdrop" data-note-close></div>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h2 id="noteDialogTitle">New note</h2>
+        <p class="sheet-sub" id="noteDialogSub"></p>
+      </div>
+      <button class="btn-icon" data-note-close aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <textarea id="noteText" rows="7" placeholder="What happened on this duty?"></textarea>
+      <p class="hint">Stored on this device. Nothing is uploaded.</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-danger" id="noteDelete" hidden>Delete</button>
+      <button class="btn-ghost" data-note-close>Cancel</button>
+      <button class="btn-primary" id="noteSave">Save note</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast" hidden></div>
 
