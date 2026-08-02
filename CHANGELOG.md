@@ -13,6 +13,23 @@ The service worker cache version (`VERSION` in `sw.js`) is bumped with every
 release so installed copies pick the release up; it is listed against each
 entry below.
 
+## [0.15.0-beta] — 2026-08-02 · sw v18
+
+### Changed
+- **The import report reads top-down from the file to what came of it.** Each
+  imported roster now names the file, then whose roster it is and the period it
+  covers as `01-01-2022 → 31-12-2022`, then the legs and ground duties, then the
+  crew rows and the people they resolved to, then how many notes found their
+  activity.
+- Notes matched during an import are reported for the file they matched against
+  rather than as a separate closing line.
+
+### Removed
+- "Closed airports resolved" from the import report. Retired codes such as `TXL`
+  have been in the airport table since 0.4.0-beta and are mapped like any other,
+  so there is nothing there for the reader to act on. The report is for problems
+  now: codes missing from the airport table, and rows the parser could not read.
+
 ## [0.14.2-beta] — 2026-08-02 · sw v17
 
 ### Fixed

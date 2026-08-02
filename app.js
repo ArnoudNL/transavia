@@ -42,6 +42,8 @@ const parseIso = s => { const [y,m,d] = s.split('-').map(Number); return utc(y, 
 const DAY_FMT   = new Intl.DateTimeFormat('en-GB', { weekday:'short', day:'numeric', month:'short', year:'numeric', timeZone:'UTC' });
 const SHORT_FMT = new Intl.DateTimeFormat('en-GB', { day:'2-digit', month:'short', year:'2-digit', timeZone:'UTC' });
 const fmtDay   = s => DAY_FMT.format(parseIso(s));
+/** 2022-01-01 -> 01-01-2022, the way a roster period is spoken about. */
+const fmtDMY = s => (s || '').slice(0, 10).split('-').reverse().join('-');
 const fmtShort = s => SHORT_FMT.format(parseIso(s));
 
 function toast(msg, ms = 2200) {
@@ -907,15 +909,11 @@ async function importFiles(fileList) {
       }
 
       /* flights — merge on identity, union the crew lists */
-      let neu = 0, merged = 0, unknown = new Set(), retired = new Set();
+      let neu = 0, merged = 0, unknown = new Set();
       for (const f of parsed.flights) {
         const id = flightId(f);
         const rec = fMap.get(id);
-        [f.from, f.to].forEach(c => {
-          if (!c) return;
-          if (!AIRPORTS[c]) unknown.add(c);
-          else if (apClosed(c)) retired.add(c);
-        });
+        [f.from, f.to].forEach(c => { if (c && !AIRPORTS[c]) unknown.add(c); });
         const km = (f.from && f.to && apPos(f.from) && apPos(f.to)) ? haversine(apPos(f.from), apPos(f.to)) : null;
         if (rec) {
           rec.crew    = [...new Set([...(rec.crew || []), ...(f.crew || [])])];
@@ -951,17 +949,18 @@ async function importFiles(fileList) {
       });
 
       bar.remove();
-      head.innerHTML = `<b>${esc(file.name)}</b><br>` +
-        `<span class="ok">✓ ${fmtInt(neu)} new leg${neu === 1 ? '' : 's'}</span>` +
-        (merged ? ` · ${fmtInt(merged)} already known (merged)` : '') +
-        (dNew ? ` · ${fmtInt(dNew)} ground duties` : '') +
-        (parsed.owner ? `<br>Roster of <b>${esc(parsed.owner)}</b>` : '') +
-        (parsed.period ? ` · ${esc(parsed.period.join(' → '))}` : '') +
+      /* Whose roster and which period first, then what came out of it. Only
+         genuine problems are reported: a resolved closed airport is the parser
+         working, not something to act on. */
+      head.innerHTML = `<b>${esc(file.name)}</b>` +
+        (parsed.owner
+          ? `<br>Roster of <b>${esc(parsed.owner)}</b>${parsed.period ? ` · ${esc(fmtDMY(parsed.period[0]))} → ${esc(fmtDMY(parsed.period[1]))}` : ''}`
+          : '') +
+        `<br><span class="ok">${fmtInt(neu)} new leg${neu === 1 ? '' : 's'}</span>` +
+        ` · ${fmtInt(dNew)} ground dut${dNew === 1 ? 'y' : 'ies'}` +
+        (merged ? ` · ${fmtInt(merged)} already known` : '') +
         (parsed.crewRows ? `<br>${fmtInt(parsed.crewRows)} crew-composition rows → ${fmtInt(parsed.people.size)} people` : '');
-      if (retired.size) head.innerHTML += `<br>Closed airports resolved: ${[...retired].map(c => {
-        const a = AIRPORTS[c];
-        return `<b>${esc(c)}</b> ${esc(a && a[2] ? a[2] : apName(c))}`;   // prefer the distinctive name over the city
-      }).join(', ')}`;
+      head.dataset.file = file.name;                       // so note matches can be added below
       if (unknown.size) head.innerHTML += `<br><span class="warn">⚠ Not in the airport table, so not mapped: ${[...unknown].join(', ')}</span>`;
       for (const w of parsed.warnings.slice(0, 4)) head.innerHTML += `<br><span class="warn">⚠ ${esc(w)}</span>`;
     } catch (err) {
@@ -981,10 +980,18 @@ async function importFiles(fileList) {
   /* A note imported before its roster had nothing to attach to. Now that these
      activities exist, look at everything still unlinked and match what fits. */
   const relinked = await applyRelink();
-  line('', `<b>Done.</b> ${fmtInt(totalNew)} new, ${fmtInt(totalMerged)} deduplicated.` +
-    (relinked.checked
-      ? `<br>${fmtInt(relinked.linked)} of ${fmtInt(relinked.checked)} unlinked note${relinked.checked === 1 ? '' : 's'} now matched to an activity.`
-      : ''));
+  const blocks = [...log.querySelectorAll('[data-file]')];
+  if (relinked.linked) {
+    /* With one roster in hand the matches belong to it. With several there is
+       no honest way to attribute them, so they are stated once. */
+    const note = `<br><span class="ok">${fmtInt(relinked.linked)} match${relinked.linked === 1 ? '' : 'es'} with Notes</span>`;
+    if (blocks.length === 1) blocks[0].innerHTML += note;
+    else line('', note.replace('<br>', ''));
+  }
+  if (blocks.length > 1) {
+    line('', `<b>${fmtInt(totalNew)} new leg${totalNew === 1 ? '' : 's'}</b> across ${fmtInt(blocks.length)} rosters` +
+      (totalMerged ? `, ${fmtInt(totalMerged)} already known` : '') + '.');
+  }
 
   refreshAll();
   toast(totalNew
@@ -3025,7 +3032,7 @@ async function importAny(fileList) {
    VERSION in sw.js in step: the service worker cannot import, and its cache
    name is what makes installed copies pick a release up. CHANGELOG.md lists
    both against each entry. */
-const APP_VERSION = '0.14.2-beta';
+const APP_VERSION = '0.15.0-beta';
 
 async function boot() {
   try {
