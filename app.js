@@ -93,9 +93,35 @@ function gcSegments(a, b, n = 48) {
 const DB_NAME = 'roster-atlas', DB_VERSION = 2;
 let db = null;
 
-function openDB() {
+/* Opening at a fixed version fails outright if the device already holds a
+   NEWER schema — which happens whenever a newer build has run here and the
+   service worker then serves an older one. A newer schema is a superset in
+   practice, so rather than refuse to start, reopen at whatever version exists
+   and carry on provided the stores this build needs are present. */
+async function openDB() {
+  try {
+    return await openDBAt(DB_VERSION);
+  } catch (err) {
+    if (err && err.name === 'VersionError') {
+      const d = await openDBAt(undefined);
+      const missing = ['flights', 'duties', 'people', 'sources', 'meta', 'notes']
+        .filter(n => !d.objectStoreNames.contains(n));
+      if (!missing.length) {
+        console.warn(`[db] device holds schema v${d.version}; this build expects v${DB_VERSION}. Continuing.`);
+        return d;
+      }
+      d.close();
+      throw new Error('This device holds data from a newer version of the app. Reload to update, or reinstall from the home screen.');
+    }
+    throw err;
+  }
+}
+
+function openDBAt(version) {
   return new Promise((res, rej) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = version === undefined
+      ? indexedDB.open(DB_NAME)
+      : indexedDB.open(DB_NAME, version);
     req.onupgradeneeded = ev => {
       const d = ev.target.result;
       if (!d.objectStoreNames.contains('flights')) {
@@ -116,10 +142,30 @@ function openDB() {
         n.createIndex('created', 'created');
       }
     };
-    req.onsuccess = () => res(req.result);
+    /* A schema upgrade cannot run while another connection still holds the old
+       version — a second tab, or this page's own predecessor kept alive in the
+       back/forward cache. IndexedDB signals that with `blocked` and then fires
+       neither success nor error, so a promise waiting only on those two never
+       settles and the splash sits there for ever. Report it instead. */
+    req.onblocked = () => rej(new Error(
+      'Another copy of the app still has the database open, so it could not be upgraded. ' +
+      'Close its other tabs and windows — including the home-screen app if that is running — then try again.'));
+    req.onsuccess = () => {
+      const d = req.result;
+      /* And be a good citizen in the other direction: when another tab needs to
+         upgrade, let go instead of blocking it. */
+      d.onversionchange = () => { d.close(); location.reload(); };
+      res(d);
+    };
     req.onerror   = () => rej(req.error);
   });
 }
+
+/** Reject rather than wait for ever, so a stall always surfaces as a message. */
+const withTimeout = (promise, ms, message) => Promise.race([
+  promise,
+  new Promise((_, rej) => setTimeout(() => rej(new Error(message)), ms)),
+]);
 
 const tx = (stores, mode) => db.transaction(stores, mode);
 function idbReq(r) { return new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
@@ -2826,25 +2872,39 @@ function renderNotes() {
 /* Single source for the release. Keep VERSION in sw.js in step: the service
    worker cannot import, and its cache name is what makes installed copies pick
    a release up. CHANGELOG.md lists both against each entry. */
-const APP_VERSION = '0.13.0-beta';
-const SW_TAG = '13';
+const APP_VERSION = '0.13.1-beta';
+const SW_TAG = '14';
 
 async function boot() {
   try {
-    await loadReference();
-    db = await openDB();
-    await loadData();
+    await withTimeout(loadReference(), 20000, 'Loading the airport and map data took too long.');
+    db = await withTimeout(openDB(), 8000,
+      'The local database did not open. If the app is also open in another tab or on your home screen, close those and try again.');
+    await withTimeout(loadData(), 20000, 'Reading your saved roster took too long.');
   } catch (err) {
     console.error(err);
-    $('#boot').innerHTML = `<p style="max-width:280px;text-align:center">Could not open local storage.<br><small>${esc(err.message || err)}</small><br><br>Private browsing blocks IndexedDB — open the app in a normal tab.</p>`;
+    $('#boot').innerHTML =
+      `<div style="max-width:320px;text-align:center">
+         <p style="font-weight:600;margin-bottom:8px">The app could not start</p>
+         <p style="font-size:14px;color:#6a6a6a">${esc(err.message || String(err))}</p>
+         <p style="font-size:13px;color:#6a6a6a;margin-top:12px">Nothing has been deleted — your roster and notes are still on the device. Private browsing also blocks local storage.</p>
+         <button class="btn-primary" style="margin-top:18px" onclick="location.reload()">Try again</button>
+       </div>`;
     return;
   }
-  initMap();
-  wireEvents();
-  $('#appVersion').textContent = `Version ${APP_VERSION} · MIT licence · beta — check totals against the printed roster.`;
-  $('#fPassive').checked = S.filter.passive;
-  refreshAll();
-  if (S.flights.length) drawMap(true); else switchView('data');
+  /* Past this point the data is in hand. A fault in any one view must not leave
+     the splash covering an app that is otherwise working. */
+  try {
+    initMap();
+    wireEvents();
+    $('#appVersion').textContent = `Version ${APP_VERSION} · MIT licence · beta — check totals against the printed roster.`;
+    $('#fPassive').checked = S.filter.passive;
+    refreshAll();
+    if (S.flights.length) drawMap(true); else switchView('data');
+  } catch (err) {
+    console.error('[boot] a view failed to render', err);
+    setTimeout(() => toast('Something did not render — see the console'), 600);
+  }
   $('#boot').classList.add('is-gone');
   setTimeout(() => { $('#boot').hidden = true; }, 350);
 

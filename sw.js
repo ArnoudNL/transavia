@@ -5,7 +5,7 @@
    Map tiles, when the user turns them on, are cached opportunistically.
    ========================================================================== */
 
-const VERSION    = 'v13';
+const VERSION    = 'v14';
 const SHELL      = `roster-atlas-shell-${VERSION}`;
 const TILES      = `roster-atlas-tiles-${VERSION}`;
 const TILE_LIMIT = 700;
@@ -87,27 +87,30 @@ self.addEventListener('fetch', event => {
 
   if (url.origin !== self.location.origin) return;   // never touch anything else
 
-  /* App shell — stale-while-revalidate: answer instantly from cache (so the
-     app opens in airplane mode), and refresh the cached copy in the background
-     so a redeployed file is picked up on the next launch. */
+  /* App shell — cache first, and deliberately WITHOUT background revalidation.
+     Refreshing individual files into the running cache used to mean index.html
+     and app.js could come from different builds, which breaks the app in ways
+     that look nothing like a caching problem. The whole shell is precached
+     together at install under a versioned cache name, so a release is adopted
+     as one atomic set when VERSION changes and never half-applied. */
   event.respondWith((async () => {
     const cache = await caches.open(SHELL);
     const cached = await cache.match(req, { ignoreSearch: true });
+    if (cached) return cached;
 
-    const network = fetch(req).then(res => {
+    try {
+      const res = await fetch(req);
+      /* Anything reaching here was not in the versioned shell cache, so caching
+         it cannot mix generations. */
       if (res && res.ok && res.type === 'basic') cache.put(req, res.clone());
       return res;
-    }).catch(() => null);
-
-    if (cached) { event.waitUntil(network); return cached; }
-
-    const res = await network;
-    if (res) return res;
-    if (req.mode === 'navigate') {
-      const fallback = await cache.match('./index.html');
-      if (fallback) return fallback;
+    } catch (err) {
+      if (req.mode === 'navigate') {
+        const fallback = await cache.match('./index.html');
+        if (fallback) return fallback;
+      }
+      return new Response('Offline and not cached', { status: 504 });
     }
-    return new Response('Offline and not cached', { status: 504 });
   })());
 });
 

@@ -13,6 +13,31 @@ The service worker cache version (`VERSION` in `sw.js`) is bumped with every
 release so installed copies pick the release up; it is listed against each
 entry below.
 
+## [0.13.1-beta] — 2026-07-29 · sw v14
+
+### Fixed
+- **The app could hang on "Loading Transavia Roster…" after a refresh.** Adding
+  the notes store raised the database version, and a schema upgrade cannot run
+  while another connection holds the old one — a second tab, or the page's own
+  predecessor kept alive in the back/forward cache. IndexedDB reports that with
+  a `blocked` event and then fires neither `success` nor `error`, so the promise
+  waiting on those two never settled. `blocked` is now handled, an open
+  connection stands aside when another tab needs to upgrade, and every startup
+  step is bounded so a stall becomes a message with a Try again button rather
+  than an endless splash.
+- Running an older build after a newer one no longer refuses to start: the app
+  reopens at whatever schema the device holds, provided the stores it needs are
+  there.
+- A failure while rendering a view no longer leaves the splash covering an app
+  that is otherwise working.
+
+### Changed
+- The service worker serves the app shell strictly from its versioned cache and
+  no longer refreshes individual files into it in the background. That could
+  leave `index.html` and `app.js` from different builds, which breaks the app in
+  ways that look nothing like a caching problem. A release is now adopted as one
+  atomic set when `VERSION` changes.
+
 ## [0.13.0-beta] — 2026-07-29 · sw v13
 
 ### Added
