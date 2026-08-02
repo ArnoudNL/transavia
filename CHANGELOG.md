@@ -13,6 +13,26 @@ The service worker cache version (`VERSION` in `sw.js`) is bumped with every
 release so installed copies pick the release up; it is listed against each
 entry below.
 
+## [0.14.0-beta] — 2026-08-02 · sw v15
+
+### Changed
+- **Import and export are on the Data tab only.** The Notes tab now does one
+  job: showing, indexing and searching notes.
+- **Both kinds share one import and one export.** A dropped file is routed by
+  what it contains, so a roster PDF and a notes CSV can arrive together.
+  Rosters and notes both export to HTML, TXT, JSON and CSV from the same
+  control, and every exported format is recognised on the way back in.
+- Each export writes exactly one file, named and typed for the format asked
+  for. Nothing is written alongside it.
+- Deleting is now three separate actions — roster, notes, or everything — each
+  asking twice and naming what will go and how much.
+
+### Added
+- **Notes and rosters are matched against each other whichever arrives first.**
+  Importing a roster now re-checks every unlinked note against the activities
+  that just appeared and reports how many attached, so notes restored before
+  their roster are no longer stranded.
+
 ## [0.13.1-beta] — 2026-07-29 · sw v14
 
 ### Fixed

@@ -167,32 +167,7 @@
       </div>
       <div class="statstrip inline" id="noteStats"></div>
       <div id="noteList" class="list"></div>
-
-      <h2 class="section-h">Where notes are kept</h2>
-      <div class="card" id="noteFolder"></div>
-
-      <h2 class="section-h">Export</h2>
-      <div class="card">
-        <p class="hint">The file carries each note with its date, time and flight number or duty code, so it can be read back in later.</p>
-        <div class="row-btns">
-          <button class="btn-ghost" data-export-notes="html">HTML</button>
-          <button class="btn-ghost" data-export-notes="txt">TXT</button>
-          <button class="btn-ghost" data-export-notes="json">JSON</button>
-          <button class="btn-ghost" data-export-notes="csv">CSV</button>
-        </div>
-      </div>
-
-      <h2 class="section-h">Import</h2>
-      <div class="card">
-        <p class="hint">Notes are matched back to their activity on date, time and flight number or duty code. Anything that finds no match is kept and marked unlinked.</p>
-        <label class="filedrop" for="noteImportInput">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <strong>Choose note file(s)</strong>
-          <span>.html · .txt · .json · .csv</span>
-        </label>
-        <input type="file" id="noteImportInput" accept=".html,.txt,.json,.csv,text/html,text/plain,application/json,text/csv" multiple>
-        <div id="noteImportLog" class="importlog" hidden></div>
-      </div>
+      <p class="hint" id="noteHint"></p>
     </div>
   </section>
 
@@ -200,16 +175,42 @@
   <section class="view" id="view-data">
     <div class="scroll">
       <div class="card import">
-        <h2>Import roster</h2>
-        <p class="hint">Everything is parsed on this device. Nothing is uploaded, ever.</p>
+        <h2>Import</h2>
+        <p class="hint">Rosters and notes both go here — each file is recognised by what it contains. Everything is read on this device; nothing is uploaded.</p>
         <label class="filedrop" for="fileInput">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <strong>Choose roster file(s)</strong>
-          <span>Crew Roster Portal PDF · or .txt / .csv / .json</span>
+          <strong>Choose file(s)</strong>
+          <span>.pdf · .html · .txt · .json · .csv</span>
         </label>
-        <input type="file" id="fileInput" accept=".pdf,.txt,.csv,.json,application/pdf,text/plain,text/csv,application/json" multiple>
+        <input type="file" id="fileInput" accept=".pdf,.html,.txt,.json,.csv,application/pdf,text/html,text/plain,application/json,text/csv" multiple>
         <div id="importLog" class="importlog" hidden></div>
       </div>
+
+      <h2 class="section-h">Export</h2>
+      <div class="card">
+        <p class="hint">One file per export, in the format you pick. Roster exports carry each leg with its crew; note exports carry each note with its activity.</p>
+        <div class="export-row">
+          <span class="export-label">Roster</span>
+          <div class="row-btns">
+            <button class="btn-ghost" data-export="roster:html">HTML</button>
+            <button class="btn-ghost" data-export="roster:txt">TXT</button>
+            <button class="btn-ghost" data-export="roster:json">JSON</button>
+            <button class="btn-ghost" data-export="roster:csv">CSV</button>
+          </div>
+        </div>
+        <div class="export-row">
+          <span class="export-label">Notes</span>
+          <div class="row-btns">
+            <button class="btn-ghost" data-export="notes:html">HTML</button>
+            <button class="btn-ghost" data-export="notes:txt">TXT</button>
+            <button class="btn-ghost" data-export="notes:json">JSON</button>
+            <button class="btn-ghost" data-export="notes:csv">CSV</button>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="section-h">Where notes are kept</h2>
+      <div class="card" id="noteFolder"></div>
 
       <h2 class="section-h">Imported rosters</h2>
       <div id="sourceList" class="list"></div>
@@ -219,16 +220,23 @@
         <div class="kv"><span>Flights</span><b id="dbFlights">0</b></div>
         <div class="kv"><span>Ground duties</span><b id="dbDuties">0</b></div>
         <div class="kv"><span>People</span><b id="dbPeople">0</b></div>
+        <div class="kv"><span>Notes</span><b id="dbNotes">0</b></div>
         <div class="kv"><span>Estimated size</span><b id="dbSize">—</b></div>
+      </div>
+
+      <h2 class="section-h">Delete</h2>
+      <div class="card">
+        <p class="hint">Deleting cannot be undone, and there is no backup unless you have exported one. Each of these asks twice.</p>
         <div class="row-btns">
-          <button class="btn-ghost" id="btnExport">Export backup (.json)</button>
-          <button class="btn-danger" id="btnWipe">Delete everything</button>
+          <button class="btn-danger" id="btnDeleteRoster">Delete roster</button>
+          <button class="btn-danger" id="btnDeleteNotes">Delete notes</button>
+          <button class="btn-danger" id="btnDeleteAll">Delete all</button>
         </div>
       </div>
 
       <h2 class="section-h">About</h2>
       <div class="card about">
-        <p><b>Transavia Roster</b> keeps your roster in this device's IndexedDB. It never contacts a server with your data — there is no account, no sync, no analytics.</p>
+        <p><b>Transavia Roster</b> keeps your roster and notes in this device's storage. It never contacts a server with your data — there is no account, no sync, no analytics.</p>
         <p>Online map tiles are <b>off</b> by default; the world outline is bundled with the app so the map works in airplane mode. Turning tiles on requests images from CARTO/OpenStreetMap — that reveals which areas you pan over, not your roster.</p>
         <p>Roster times are UTC (Zulu), shown exactly as printed, so block and duty totals are plain arithmetic. Local station times are derived from the airport's time zone. Distances are great-circle.</p>
         <p><b>Not an official Transavia app.</b> It is an independent personal tool, not affiliated with, endorsed by, or connected to Transavia. All trademarks belong to their owners.</p>
@@ -236,7 +244,6 @@
         <p class="muted" id="swStatus">Service worker: checking…</p>
       </div>
     </div>
-  </section>
 </main>
 
 <nav class="tabbar" id="tabbar" role="tablist">

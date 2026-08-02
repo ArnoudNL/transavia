@@ -976,10 +976,20 @@ async function importFiles(fileList) {
   await putAll('duties', [...dMap.values()]);
   await putAll('sources', sources);
 
-  line('', `<b>Done.</b> ${fmtInt(totalNew)} new, ${fmtInt(totalMerged)} deduplicated.`);
   await loadData();
+
+  /* A note imported before its roster had nothing to attach to. Now that these
+     activities exist, look at everything still unlinked and match what fits. */
+  const relinked = await applyRelink();
+  line('', `<b>Done.</b> ${fmtInt(totalNew)} new, ${fmtInt(totalMerged)} deduplicated.` +
+    (relinked.checked
+      ? `<br>${fmtInt(relinked.linked)} of ${fmtInt(relinked.checked)} unlinked note${relinked.checked === 1 ? '' : 's'} now matched to an activity.`
+      : ''));
+
   refreshAll();
-  toast(totalNew ? `${fmtInt(totalNew)} flights imported` : 'Nothing new — already up to date');
+  toast(totalNew
+    ? `${fmtInt(totalNew)} flights imported${relinked.linked ? ` · ${fmtInt(relinked.linked)} notes linked` : ''}`
+    : 'Nothing new — already up to date');
 }
 
 /* ── 7. in-memory state ─────────────────────────────────────────────────── */
@@ -2056,6 +2066,8 @@ function renderData() {
   $('#dbFlights').textContent = fmtInt(S.flights.length);
   $('#dbDuties').textContent  = fmtInt(S.duties.length);
   $('#dbPeople').textContent  = fmtInt(S.people.size);
+  $('#dbNotes').textContent   = fmtInt(S.notes.length);
+  renderNoteFolderCard();
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then(e => {
       $('#dbSize').textContent = e.usage ? (e.usage / 1048576).toFixed(1) + ' MB' : '—';
@@ -2270,10 +2282,6 @@ function wireEvents() {
 
   /* notes */
   $('#noteSearch').addEventListener('input', renderNotes);
-  $('#noteImportInput').addEventListener('change', async ev => {
-    const files = [...ev.target.files]; ev.target.value = '';
-    if (files.length) await importNotesFiles(files);
-  });
   $('#noteSave').addEventListener('click', commitNote);
   $('#noteDelete').addEventListener('click', async () => {
     const id = $('#noteDialog').dataset.note;
@@ -2295,16 +2303,11 @@ function wireEvents() {
   $('#fileInput').addEventListener('change', async ev => {
     const files = [...ev.target.files];
     ev.target.value = '';
-    if (files.length) await importFiles(files);
+    if (files.length) await importAny(files);
   });
-  $('#btnExport').addEventListener('click', exportBackup);
-  $('#btnWipe').addEventListener('click', async () => {
-    if (!confirm('Delete every imported roster from this device? This cannot be undone.')) return;
-    await clearAll(); await loadData();
-    S.filter = { from: null, to: null, crew: [], passive: true }; S.overlap = { crew: [], from: null, to: null };
-    S.selectedRoute = null;
-    refreshAll(); toast('All local data deleted');
-  });
+  $('#btnDeleteRoster').addEventListener('click', () => wipe('roster'));
+  $('#btnDeleteNotes').addEventListener('click',  () => wipe('notes'));
+  $('#btnDeleteAll').addEventListener('click',    () => wipe('all'));
 
   /* delegated: rows and sheet actions */
   document.addEventListener('click', async ev => {
@@ -2320,12 +2323,10 @@ function wireEvents() {
     if (noteRow && !ev.target.closest('#noteDialog')) {
       openNoteEditor(null, noteRow.dataset.note); return;
     }
-    const expN = ev.target.closest('[data-export-notes]');
-    if (expN) {
-      const fmt = expN.dataset.exportNotes;
-      const stamp = iso(new Date());
-      await writeOut(`roster-notes-${stamp}.${fmt}`, exportNotes(fmt),
-        { html:'text/html', txt:'text/plain', json:'application/json', csv:'text/csv' }[fmt]);
+    const exp = ev.target.closest('[data-export]');
+    if (exp) {
+      const [what, fmt] = exp.dataset.export.split(':');
+      await exportTo(what, fmt);
       return;
     }
     const route = ev.target.closest('[data-route]');
@@ -2442,6 +2443,37 @@ async function renamePerson(key) {
   await loadData(); hideSheet(); refreshAll();
 }
 
+/* Two confirmations, because none of this can be undone and the roster took
+   real work to build. The second names what is about to go and how much. */
+async function wipe(what) {
+  const counts = {
+    roster: `${fmtInt(S.flights.length)} flights and ${fmtInt(S.duties.length)} ground duties`,
+    notes:  `${fmtInt(S.notes.length)} note${S.notes.length === 1 ? '' : 's'}`,
+    all:    `${fmtInt(S.flights.length)} flights, ${fmtInt(S.duties.length)} ground duties and ${fmtInt(S.notes.length)} note${S.notes.length === 1 ? '' : 's'}`,
+  }[what];
+  const label = { roster: 'the roster', notes: 'your notes', all: 'everything' }[what];
+
+  if (!confirm(`Delete ${label}?\n\nThis will remove ${counts} from this device.`)) return;
+  if (!confirm(`Are you sure?\n\nThis cannot be undone. There is no backup unless you have exported one.\n\nPress OK to delete ${label} permanently.`)) return;
+
+  const stores = what === 'notes' ? ['notes']
+    : what === 'roster' ? ['flights', 'duties', 'people', 'sources']
+    : ['flights', 'duties', 'people', 'sources', 'meta', 'notes'];
+  const t = tx(stores, 'readwrite');
+  stores.forEach(n => t.objectStore(n).clear());
+  await idbDone(t);
+
+  if (what !== 'notes') {
+    S.filter = { from: null, to: null, crew: [], passive: true };
+    S.overlap = { crew: [], from: null, to: null };
+    S.selectedRoute = null;
+  }
+  await loadData(); await loadNotes();
+  if (what !== 'roster') await mirrorNotesToFolder();
+  refreshAll();
+  toast({ roster: 'Roster deleted', notes: 'Notes deleted', all: 'Everything deleted' }[what]);
+}
+
 async function exportBackup() {
   const payload = {
     app: 'transavia-roster', version: 1, exported: new Date().toISOString(),
@@ -2530,7 +2562,7 @@ async function appointFolder() {
     const dir = await window.showDirectoryPicker({ id: 'transavia-roster-notes', mode: 'readwrite' });
     await metaSet('notesDir', dir);
     await mirrorNotesToFolder();
-    renderNotes();
+    renderNoteFolderCard();
     toast(`Notes folder set to “${dir.name}”`);
   } catch (e) {
     if (e && e.name !== 'AbortError') toast('Could not open that folder');
@@ -2538,7 +2570,7 @@ async function appointFolder() {
 }
 async function forgetFolder() {
   await metaSet('notesDir', null);
-  renderNotes();
+  renderNoteFolderCard();
   toast('Notes stay on this device only');
 }
 /** Write the full set to the appointed folder. Silent when none is appointed. */
@@ -2716,7 +2748,7 @@ function linkNotes(parsed) {
 }
 
 async function importNotesFiles(fileList) {
-  const log = $('#noteImportLog');
+  const log = $('#importLog');
   log.hidden = false; log.innerHTML = '';
   let added = 0, linked = 0, skipped = 0;
   const existing = new Set(S.notes.map(n => `${n.ref.date}|${n.ref.ident}|${n.text}`));
@@ -2825,18 +2857,10 @@ function noteMatches(n, q) {
     .filter(Boolean).join(' ').toLowerCase().includes(q);
 }
 
-function renderNotes() {
-  const q = ($('#noteSearch').value || '').trim().toLowerCase();
-  const list = S.notes.filter(n => noteMatches(n, q));
-
-  $('#noteStats').innerHTML = statTiles([
-    [fmtInt(S.notes.length), 'notes'],
-    [fmtInt(new Set(S.notes.map(n => n.ref.activityId).filter(Boolean)).size), 'activities'],
-    [fmtInt(S.notes.filter(n => !n.ref.activityId).length), 'unlinked'],
-  ]);
-
+function renderNoteFolderCard() {
   folderHandle().then(dir => {
     const box = $('#noteFolder');
+    if (!box) return;
     if (!canPickFolder()) {
       box.innerHTML = `<p class="hint">This browser keeps notes in the app's own private storage on this device — there is no folder picker here. Nothing is uploaded either way; use Export to put a copy where you want it.</p>`;
       return;
@@ -2849,6 +2873,21 @@ function renderNotes() {
       : `<p class="hint">Notes are held in this device's private storage. You can also appoint a folder, and every change will be mirrored to <code>notes.json</code> inside it.</p>
          <div class="row-btns"><button class="btn-ghost" data-act="pick-folder">Appoint a folder…</button></div>`;
   });
+}
+
+function renderNotes() {
+  const q = ($('#noteSearch').value || '').trim().toLowerCase();
+  const list = S.notes.filter(n => noteMatches(n, q));
+
+  $('#noteStats').innerHTML = statTiles([
+    [fmtInt(S.notes.length), 'notes'],
+    [fmtInt(new Set(S.notes.map(n => n.ref.activityId).filter(Boolean)).size), 'activities'],
+    [fmtInt(S.notes.filter(n => !n.ref.activityId).length), 'unlinked'],
+  ]);
+
+  $('#noteHint').textContent = S.notes.length
+    ? 'Notes are added from the marker on any flight or ground duty. Import and export live on the Data tab.'
+    : '';
 
   $('#noteList').innerHTML = list.length ? list.map(n => {
     const r = n.ref || {};
@@ -2867,13 +2906,131 @@ function renderNotes() {
     : 'No notes yet. Open any flight or ground duty and tap the note marker on the row.'}</div>`;
 }
 
+/* ── 17. one import and export path for both kinds ──────────────────────── */
+/* Rosters and notes accept the same file types and produce the same ones, and
+   both live on the Data tab. A dropped file is routed by what it contains, not
+   by which control it arrived through. */
+
+const IO_FORMATS = ['html', 'txt', 'json', 'csv'];
+const IO_MIME = { html: 'text/html', txt: 'text/plain', json: 'application/json', csv: 'text/csv' };
+
+/** Roster or notes? Decided from content, so either can arrive through Import. */
+function detectFileKind(name, head) {
+  if (/\.pdf$/i.test(name)) return 'roster';
+  const t = (head || '').trimStart();
+  if (/^[[{]/.test(t)) {
+    try {
+      const j = JSON.parse(t);
+      if (j && (j.kind === 'notes' || Array.isArray(j.notes))) return 'notes';
+      if (j && (Array.isArray(j.flights) || Array.isArray(j))) return 'roster';
+    } catch { /* fall through to the text sniffing below */ }
+  }
+  if (/<article[\s>]/i.test(t)) return 'notes';
+  const first = (t.split(/\r?\n/)[0] || '').toLowerCase();
+  if (/(^|,)"?text"?(,|$)/.test(first) && /(^|,)"?ident"?(,|$)/.test(first)) return 'notes';
+  if (/^#\s*\d{4}-\d{2}-\d{2}/m.test(t)) return 'notes';
+  return 'roster';
+}
+
+/** Notes that never found their activity get another chance after a roster
+ *  arrives — the whole point of importing the roster afterwards. */
+function relinkNotes() {
+  const loose = S.notes.filter(n => !n.ref || !n.ref.activityId || !activityById(n.ref.activityId));
+  if (!loose.length) return { checked: 0, linked: 0 };
+  const parsed = loose.map(n => ({ ...n, ref: { ...n.ref } }));
+  const linked = linkNotes(parsed);
+  const changed = parsed.filter(p => p.ref.activityId);
+  return { checked: loose.length, linked, changed };
+}
+async function applyRelink() {
+  const { checked, linked, changed } = relinkNotes();
+  if (changed && changed.length) {
+    await putAll('notes', changed.map(p => ({ ...p })));
+    await loadNotes();
+    await mirrorNotesToFolder();
+  }
+  return { checked, linked: linked || 0 };
+}
+
+/* ── roster exports, in the same four formats as notes ──────────────────── */
+
+const ROSTER_COLS = ['date', 'flightNo', 'from', 'to', 'dep', 'arr', 'ci', 'co', 'ac', 'km', 'crew'];
+const rosterRow = f => ({
+  date: f.date, flightNo: f.flightNo, from: f.from, to: f.to || '',
+  dep: f.dep || '', arr: f.arr || '', ci: f.ci || '', co: f.co || '',
+  ac: f.ac || '', km: f.km || '', crew: (f.crew || []).map(personName).join('; '),
+});
+
+function exportRoster(fmt) {
+  const legs = S.flights.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.dep || '').localeCompare(b.dep || ''));
+  const rows = legs.map(rosterRow);
+  if (fmt === 'json') {
+    return JSON.stringify({
+      app: 'transavia-roster', kind: 'roster', version: APP_VERSION,
+      exported: new Date().toISOString(),
+      flights: S.flights, duties: S.duties,
+      people: [...S.people.values()].map(p => ({ ...p, tags: [...(p.tags || [])] })),
+      sources: S.sources,
+    }, null, 1);
+  }
+  if (fmt === 'csv') {
+    return [ROSTER_COLS.join(','), ...rows.map(r => ROSTER_COLS.map(c => csvCell(r[c])).join(','))].join('\r\n');
+  }
+  if (fmt === 'txt') {
+    return rows.map(r =>
+      `${r.date} ${r.dep || '--:--'}-${r.arr || '--:--'} ${r.flightNo} ${r.from}->${r.to}` +
+      `${r.ac ? ' ' + r.ac : ''}${r.km ? ' ' + r.km + 'km' : ''}${r.crew ? '\n  crew: ' + r.crew : ''}`).join('\n');
+  }
+  const sum = summarise(S.flights);
+  return `<!DOCTYPE html>
+<meta charset="utf-8"><title>Roster</title>
+<style>
+ body{font:14px/1.5 -apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#222;margin:32px}
+ h1{font-size:22px;margin:0 0 4px} .meta{color:#6a6a6a;font-size:13px;margin-bottom:20px}
+ table{border-collapse:collapse;width:100%;max-width:900px}
+ th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #ebebeb;white-space:nowrap}
+ th{font-weight:600;border-bottom:1px solid #ddd}
+ td.crew{white-space:normal;color:#6a6a6a}
+ @media print{body{margin:0}}
+</style>
+<h1>Roster</h1>
+<div class="meta">${fmtInt(sum.legs)} legs · ${fmtInt(sum.routes)} routes · ${fmtInt(sum.airports)} airports · exported ${esc(new Date().toLocaleString('en-GB'))}</div>
+<table><tr>${ROSTER_COLS.map(c => `<th>${esc(c)}</th>`).join('')}</tr>
+${rows.map(r => `<tr>${ROSTER_COLS.map(c => `<td${c === 'crew' ? ' class="crew"' : ''}>${esc(r[c])}</td>`).join('')}</tr>`).join('\n')}
+</table>
+`;
+}
+
+/* ── writing out ────────────────────────────────────────────────────────── */
+/* Exactly one file per export, named and typed for the format asked for —
+   nothing else is written alongside it. */
+async function exportTo(what, fmt) {
+  const text = what === 'notes' ? exportNotes(fmt) : exportRoster(fmt);
+  const name = `transavia-${what}-${iso(new Date())}.${fmt}`;
+  await writeOut(name, text, IO_MIME[fmt]);
+}
+
+/* ── the single importer ────────────────────────────────────────────────── */
+
+async function importAny(fileList) {
+  const rosters = [], notes = [];
+  for (const file of fileList) {
+    let head = '';
+    if (!/\.pdf$/i.test(file.name)) head = await readText(file.slice(0, 4096));
+    (detectFileKind(file.name, head) === 'notes' ? notes : rosters).push(file);
+  }
+  if (rosters.length) await importFiles(rosters);
+  if (notes.length)   await importNotesFiles(notes);
+  if (!rosters.length && !notes.length) toast('Nothing recognised in those files');
+}
+
 /* ── 15. boot ───────────────────────────────────────────────────────────── */
 
 /* Single source for the release. Keep VERSION in sw.js in step: the service
    worker cannot import, and its cache name is what makes installed copies pick
    a release up. CHANGELOG.md lists both against each entry. */
-const APP_VERSION = '0.13.1-beta';
-const SW_TAG = '14';
+const APP_VERSION = '0.14.0-beta';
+const SW_TAG = '15';
 
 async function boot() {
   try {

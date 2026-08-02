@@ -68,9 +68,17 @@ Either way nothing is uploaded. The notes module makes no network calls at all
 — verified by instrumenting `fetch`, `XMLHttpRequest`, `sendBeacon` and
 `WebSocket` while adding, listing, exporting, importing and deleting notes.
 
-Export and import both handle HTML, TXT, JSON and CSV. The HTML export doubles
-as the printable copy and repeats every field in `data-` attributes, so a round
-trip through it loses nothing.
+Import and export live on the **Data** tab, for rosters and notes alike; the
+Notes tab is for reading and searching. One Import control takes `.pdf`, `.html`,
+`.txt`, `.json` and `.csv` and routes each file by what it contains, so a roster
+and a notes file can be dropped together. Both kinds export to HTML, TXT, JSON
+and CSV, one file per export. The HTML export doubles as the printable copy and
+repeats every field in `data-` attributes, so a round trip through it loses
+nothing.
+
+Matching runs whichever way round you import: notes restored before their roster
+sit unlinked until that roster arrives, and importing it re-checks them and
+reports how many attached.
 
 ## Version and licence
 
