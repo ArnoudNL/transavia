@@ -2581,11 +2581,15 @@ async function writeOut(name, text, mime) {
       return;
     } catch (e) { console.warn('[notes] folder write failed, offering a download', e); }
   }
-  /* The share sheet gets the real media type, so the receiving app knows what
-     it is holding. */
+  /* Share the file and NOTHING else. Given a `title` or `text` alongside it,
+     iOS treats that string as a second thing worth sharing and Save to Files
+     writes it out as its own document — which is where the stray one-line
+     tekst.txt came from. The file already carries its name, so the title added
+     nothing anyway. The real media type stays on the file so the receiving app
+     knows what it is holding. */
   const file = new File([text], name, { type: mime });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: name }); return; }
+    try { await navigator.share({ files: [file] }); return; }
     catch (e) { if (e.name === 'AbortError') return; }
   }
   /* The download link does NOT. Given a text/* blob, Safari decides it knows
@@ -3021,7 +3025,7 @@ async function importAny(fileList) {
    VERSION in sw.js in step: the service worker cannot import, and its cache
    name is what makes installed copies pick a release up. CHANGELOG.md lists
    both against each entry. */
-const APP_VERSION = '0.14.1-beta';
+const APP_VERSION = '0.14.2-beta';
 
 async function boot() {
   try {

@@ -13,6 +13,16 @@ The service worker cache version (`VERSION` in `sw.js`) is bumped with every
 release so installed copies pick the release up; it is listed against each
 entry below.
 
+## [0.14.2-beta] — 2026-08-02 · sw v17
+
+### Fixed
+- **A second, one-line text file came out alongside every export.** The export
+  was shared with a `title` next to the file; iOS treats that string as another
+  thing worth sharing, so Save to Files wrote it out as its own document — a
+  31-byte `tekst.txt` containing nothing but the export's filename. The share
+  now carries the file and nothing else. The file already knows its own name,
+  so the title was never doing any work.
+
 ## [0.14.1-beta] — 2026-08-02 · sw v16
 
 ### Fixed
